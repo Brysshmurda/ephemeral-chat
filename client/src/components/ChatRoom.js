@@ -10,6 +10,9 @@ const ChatRoom = ({ user, token, onLogout }) => {
   const [showRoomInput, setShowRoomInput] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [roomError, setRoomError] = useState('');
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [directMessages, setDirectMessages] = useState(new Map()); // userId -> messages[]
+  const [activeDM, setActiveDM] = useState(null); // userId of active DM conversation
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -53,6 +56,33 @@ const ChatRoom = ({ user, token, onLogout }) => {
     newSocket.on('user_left_room', ({ username, users }) => {
       setRoomUsers(users);
       console.log(`${username} left the room`);
+    });
+
+    // Online users list
+    newSocket.on('online_users', (users) => {
+      setOnlineUsers(users.filter(u => u.userId !== user.id));
+    });
+
+    // Direct message received
+    newSocket.on('direct_message_received', (messageData) => {
+      setDirectMessages(prev => {
+        const newMap = new Map(prev);
+        const userId = messageData.senderId;
+        const existingMessages = newMap.get(userId) || [];
+        newMap.set(userId, [...existingMessages, messageData]);
+        return newMap;
+      });
+    });
+
+    // Direct message sent (confirmation)
+    newSocket.on('direct_message_sent', (messageData) => {
+      setDirectMessages(prev => {
+        const newMap = new Map(prev);
+        const userId = messageData.targetUserId;
+        const existingMessages = newMap.get(userId) || [];
+        newMap.set(userId, [...existingMessages, messageData]);
+        return newMap;
+      });
     });
 
     socketRef.current = newSocket;
@@ -103,6 +133,28 @@ const ChatRoom = ({ user, token, onLogout }) => {
       setCurrentRoom(null);
       setMessages([]);
       setRoomUsers([]);
+    }
+  };
+
+  const handleStartDM = (targetUser) => {
+    // Leave current room if in one
+    if (currentRoom) {
+      socket.emit('leave_room');
+      setCurrentRoom(null);
+      setMessages([]);
+      setRoomUsers([]);
+    }
+    
+    // Set active DM conversation
+    setActiveDM(targetUser.userId);
+    
+    // Initialize DM conversation if it doesn't exist
+    if (!directMessages.has(targetUser.userId)) {
+      setDirectMessages(prev => {
+        const newMap = new Map(prev);
+        newMap.set(targetUser.userId, []);
+        return newMap;
+      });
     }
   };
 
@@ -200,6 +252,31 @@ const ChatRoom = ({ user, token, onLogout }) => {
             ))}
           </div>
         )}
+
+        {/* Online Users - DM Capability */}
+        <div className="online-users">
+          <h4>🟢 Online Users ({onlineUsers.length})</h4>
+          {onlineUsers.length === 0 ? (
+            <p className="no-users">No other users online</p>
+          ) : (
+            <div className="users-list">
+              {onlineUsers.map((onlineUser) => (
+                <div 
+                  key={onlineUser.userId} 
+                  className={`user-item clickable ${activeDM === onlineUser.userId ? 'active-dm' : ''}`}
+                  onClick={() => handleStartDM(onlineUser)}
+                  title={`Click to message ${onlineUser.username}`}
+                >
+                  <div className="online-indicator"></div>
+                  <span>{onlineUser.username}</span>
+                  {directMessages.has(onlineUser.userId) && directMessages.get(onlineUser.userId).length > 0 && (
+                    <span className="dm-badge">💬</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="chat-main">
@@ -210,18 +287,31 @@ const ChatRoom = ({ user, token, onLogout }) => {
             roomName={currentRoom}
             messages={messages}
             roomUsers={roomUsers}
+            isDM={false}
+          />
+        ) : activeDM ? (
+          <ChatWindow
+            socket={socket}
+            currentUser={user}
+            targetUserId={activeDM}
+            targetUsername={onlineUsers.find(u => u.userId === activeDM)?.username}
+            messages={directMessages.get(activeDM) || []}
+            roomUsers={[]}
+            isDM={true}
+            onCloseDM={() => setActiveDM(null)}
           />
         ) : (
           <div className="no-chat-selected">
             <div>
               <h2>💬 Ephemeral Chat</h2>
-              <p>👈 Join or create a room to start chatting</p>
+              <p>👈 Join a room or message a user to start chatting</p>
               <div className="welcome-features">
                 <h3>Features:</h3>
                 <ul>
                   <li>🏠 Create unlimited ephemeral rooms</li>
                   <li>💬 Real-time messaging</li>
-                  <li>📞 Group voice calls</li>
+                  <li>📞 Group voice calls in rooms</li>
+                  <li>✉️ Direct message online users</li>
                   <li>🔥 Everything disappears when you leave</li>
                   <li>🚫 No data stored anywhere</li>
                 </ul>

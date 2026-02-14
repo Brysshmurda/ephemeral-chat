@@ -127,6 +127,31 @@ module.exports = (io) => {
       console.log(`💬 Message in ${user.currentRoom}: ${socket.username}: ${message}`);
     });
 
+    // Send direct message to specific user
+    socket.on('send_direct_message', ({ targetUserId, message }) => {
+      const targetUser = activeUsers.get(targetUserId);
+      const sender = activeUsers.get(socket.userId);
+      
+      if (!targetUser || !sender) return;
+
+      const messageData = {
+        id: Date.now() + Math.random(),
+        senderId: socket.userId,
+        senderUsername: sender.username,
+        targetUserId: targetUserId,
+        message,
+        timestamp: new Date().toISOString()
+      };
+
+      // Send to target user
+      io.to(targetUser.socketId).emit('direct_message_received', messageData);
+
+      // Send back to sender as confirmation
+      socket.emit('direct_message_sent', messageData);
+
+      console.log(`💬 DM from ${sender.username} to ${targetUser.username}: ${message}`);
+    });
+
     // Typing indicator for room
     socket.on('typing_start', () => {
       const user = activeUsers.get(socket.userId);

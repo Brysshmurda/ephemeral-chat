@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roomUsers }) => {
+const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roomUsers, isDM = false, targetUserId, targetUsername, onCloseDM }) => {
   const [messageInput, setMessageInput] = useState('');
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [isInCall, setIsInCall] = useState(false);
@@ -55,23 +55,32 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (messageInput.trim()) {
-      socket.emit('send_message', {
-        message: messageInput
-      });
+      if (isDM) {
+        socket.emit('send_direct_message', {
+          targetUserId: targetUserId,
+          message: messageInput
+        });
+      } else {
+        socket.emit('send_message', {
+          message: messageInput
+        });
+        socket.emit('typing_stop');
+      }
       setMessageInput('');
-      socket.emit('typing_stop');
     }
   };
 
   const handleTyping = (e) => {
     setMessageInput(e.target.value);
 
-    socket.emit('typing_start');
+    if (!isDM) {
+      socket.emit('typing_start');
 
-    clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      socket.emit('typing_stop');
-    }, 1000);
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        socket.emit('typing_stop');
+      }, 1000);
+    }
   };
 
   // Group call functions
@@ -229,30 +238,62 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   return (
     <>
       <div className="ephemeral-notice">
-        ⚠️ This room is ephemeral - messages will disappear when everyone leaves
+        {isDM 
+          ? '⚠️ Direct messages are ephemeral - they disappear when you close the chat'
+          : '⚠️ This room is ephemeral - messages will disappear when everyone leaves'
+        }
       </div>
 
       <div className="chat-header">
         <div>
-          <h3>🏠 {roomName}</h3>
-          <small style={{ color: '#4caf50' }}>
-            {roomUsers.length} user{roomUsers.length !== 1 ? 's' : ''} in room
-            {isInCall && ` • ${callParticipantsCount} in call`}
-          </small>
+          {isDM ? (
+            <>
+              <h3>💬 {targetUsername}</h3>
+              <small style={{ color: '#4caf50' }}>Direct Message</small>
+              {onCloseDM && (
+                <button 
+                  className="close-dm-btn" 
+                  onClick={onCloseDM}
+                  style={{ marginLeft: '15px', padding: '5px 12px', fontSize: '12px' }}
+                >
+                  ✖ Close
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <h3>🏠 {roomName}</h3>
+              <small style={{ color: '#4caf50' }}>
+                {roomUsers.length} user{roomUsers.length !== 1 ? 's' : ''} in room
+                {isInCall && ` • ${callParticipantsCount} in call`}
+              </small>
+            </>
+          )}
         </div>
-        <button
-          className={`voice-call-btn ${isInCall ? 'calling' : ''}`}
-          onClick={isInCall ? leaveCall : joinCall}
-        >
-          {isInCall ? '📞 Leave Call' : '📞 Join Voice Call'}
-        </button>
+        {!isDM && (
+          <button
+            className={`voice-call-btn ${isInCall ? 'calling' : ''}`}
+            onClick={isInCall ? leaveCall : joinCall}
+          >
+            {isInCall ? '📞 Leave Call' : '📞 Join Voice Call'}
+          </button>
+        )}
       </div>
 
       <div className="messages-container">
         {roomMessages.length === 0 && (
           <div style={{ textAlign: 'center', color: '#999', padding: '40px' }}>
-            <h3>Welcome to {roomName}!</h3>
-            <p>No messages yet. Start the conversation!</p>
+            {isDM ? (
+              <>
+                <h3>Start a conversation with {targetUsername}</h3>
+                <p>Send a message to begin!</p>
+              </>
+            ) : (
+              <>
+                <h3>Welcome to {roomName}!</h3>
+                <p>No messages yet. Start the conversation!</p>
+              </>
+            )}
           </div>
         )}
         {roomMessages.map((msg) => (
