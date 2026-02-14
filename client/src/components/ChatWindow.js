@@ -1,44 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
-  const [messages, setMessages] = useState([]);
+const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roomUsers }) => {
   const [messageInput, setMessageInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [typingUsers, setTypingUsers] = useState(new Set());
   const [isInCall, setIsInCall] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null);
+  const [callTarget, setCallTarget] = useState(null);
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
 
-  const chatId = [currentUser.id, targetUser.userId].sort().join('_');
-
   useEffect(() => {
-    // Listen for chat history
-    socket.on('chat_history', (data) => {
-      if (data.chatId === chatId) {
-        setMessages(data.messages);
-      }
-    });
-
-    // Listen for new messages
-    socket.on('new_message', (data) => {
-      if (data.chatId === chatId) {
-        setMessages(prev => [...prev, data.message]);
-      }
-    });
-
     // Listen for typing indicators
     socket.on('user_typing', (data) => {
-      if (data.userId === targetUser.userId) {
-        setIsTyping(true);
-      }
+      setTypingUsers(prev => new Set(prev).add(data.username));
     });
 
     socket.on('user_stopped_typing', (data) => {
-      if (data.userId === targetUser.userId) {
-        setIsTyping(false);
-      }
+      setTypingUsers(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(data.username);
+        return newSet;
+      });
     });
 
     // WebRTC call events
@@ -48,8 +32,6 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
     socket.on('call_ended', handleCallEnded);
 
     return () => {
-      socket.off('chat_history');
-      socket.off('new_message');
       socket.off('user_typing');
       socket.off('user_stopped_typing');
       socket.off('incoming_call');
@@ -58,11 +40,11 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
       socket.off('call_ended');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket, chatId, targetUser.userId]);
+  }, [socket]);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [roomMessages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -72,27 +54,26 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
     e.preventDefault();
     if (messageInput.trim()) {
       socket.emit('send_message', {
-        targetUserId: targetUser.userId,
         message: messageInput
       });
       setMessageInput('');
-      socket.emit('typing_stop', { targetUserId: targetUser.userId });
+      socket.emit('typing_stop');
     }
   };
 
   const handleTyping = (e) => {
     setMessageInput(e.target.value);
 
-    socket.emit('typing_start', { targetUserId: targetUser.userId });
+    socket.emit('typing_start');
 
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      socket.emit('typing_stop', { targetUserId: targetUser.userId });
+      socket.emit('typing_stop');
     }, 1000);
   };
 
   // WebRTC Functions
-  const startCall = async () => {
+  const startCall = async (targetUserId) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = stream;
@@ -108,7 +89,7 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           socket.emit('ice_candidate', {
-            targetUserId: targetUser.userId,
+            targetUserId: targetUserId,
             candidate: event.candidate
           });
         }
@@ -124,12 +105,13 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
       await peerConnection.setLocalDescription(offer);
 
       socket.emit('call_user', {
-        targetUserId: targetUser.userId,
+        targetUserId: targetUserId,
         offer: offer
       });
 
       peerConnectionRef.current = peerConnection;
       setIsInCall(true);
+      setCallTarget(targetUserId);
     } catch (error) {
       console.error('Error starting call:', error);
       alert('Could not access microphone. Please check permissions.');
@@ -137,9 +119,7 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
   };
 
   const handleIncomingCall = async ({ from, fromUsername, offer }) => {
-    if (from === targetUser.userId) {
-      setIncomingCall({ from, fromUsername, offer });
-    }
+    setIncomingCall({ from, fromUsername, offer });
   };
 
   const acceptCall = async () => {
@@ -181,6 +161,7 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
 
       peerConnectionRef.current = peerConnection;
       setIsInCall(true);
+      setCallTarget(incomingCall.from);
       setIncomingCall(null);
     } catch (error) {
       console.error('Error accepting call:', error);
@@ -206,7 +187,9 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
   };
 
   const endCall = () => {
-    socket.emit('end_call', { targetUserId: targetUser.userId });
+    if (callTarget) {
+      socket.emit('end_call', { targetUserId: callTarget });
+    }
     handleCallEnded();
   };
 
@@ -218,6 +201,7 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
       peerConnectionRef.current.close();
     }
     setIsInCall(false);
+    setCallTarget(null);
     setIncomingCall(null);
   };
 
@@ -226,41 +210,37 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const otherUsers = roomUsers.filter(u => u.userId !== currentUser.id);
+
   return (
     <>
       <div className="ephemeral-notice">
-        ⚠️ This chat is ephemeral - messages will disappear when you close this window
+        ⚠️ This room is ephemeral - messages will disappear when everyone leaves
       </div>
 
       <div className="chat-header">
         <div>
-          <h3>{targetUser.username}</h3>
-          <small style={{ color: '#4caf50' }}>● Online</small>
+          <h3>🏠 {roomName}</h3>
+          <small style={{ color: '#4caf50' }}>{roomUsers.length} user{roomUsers.length !== 1 ? 's' : ''} in room</small>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        {isInCall && (
           <button
-            className={`voice-call-btn ${isInCall ? 'calling' : ''}`}
-            onClick={isInCall ? endCall : startCall}
+            className="voice-call-btn calling"
+            onClick={endCall}
           >
-            {isInCall ? '📞 End Call' : '📞 Voice Call'}
+            📞 End Call
           </button>
-          <button
-            className="logout-btn"
-            onClick={onClose}
-            style={{ background: '#f44336' }}
-          >
-            Close Chat
-          </button>
-        </div>
+        )}
       </div>
 
       <div className="messages-container">
-        {messages.length === 0 && (
+        {roomMessages.length === 0 && (
           <div style={{ textAlign: 'center', color: '#999', padding: '40px' }}>
-            No messages yet. Start the conversation!
+            <h3>Welcome to {roomName}!</h3>
+            <p>No messages yet. Start the conversation!</p>
           </div>
         )}
-        {messages.map((msg) => (
+        {roomMessages.map((msg) => (
           <div
             key={msg.id}
             className={`message ${msg.senderId === currentUser.id ? 'own' : ''}`}
@@ -272,9 +252,9 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
             </div>
           </div>
         ))}
-        {isTyping && (
+        {typingUsers.size > 0 && (
           <div className="typing-indicator">
-            {targetUser.username} is typing...
+            {Array.from(typingUsers).join(', ')} {typingUsers.size === 1 ? 'is' : 'are'} typing...
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -292,6 +272,26 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
           Send
         </button>
       </form>
+
+      {/* Voice call menu */}
+      {otherUsers.length > 0 && !isInCall && (
+        <div className="voice-call-menu">
+          <button className="voice-menu-toggle">
+            📞 Call Someone
+          </button>
+          <div className="voice-call-dropdown">
+            {otherUsers.map(user => (
+              <button
+                key={user.userId}
+                className="call-user-btn"
+                onClick={() => startCall(user.userId)}
+              >
+                Call {user.username}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {incomingCall && (
         <div className="incoming-call-modal">

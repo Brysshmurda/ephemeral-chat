@@ -1,11 +1,11 @@
 const jwt = require('jsonwebtoken');
 
-// In-memory storage for active users and their chats
-// Structure: { userId: { socketId, username, activeChats: Set[chatId] } }
+// In-memory storage for active users
+// Structure: { userId: { socketId, username, currentRoom: roomName } }
 const activeUsers = new Map();
 
-// Structure: { chatId: { users: Set[userId], messages: [] } }
-const activeChats = new Map();
+// Structure: { roomName: { users: Set[userId], messages: [] } }
+const rooms = new Map();
 
 module.exports = (io) => {
   io.use((socket, next) => {
@@ -32,7 +32,7 @@ module.exports = (io) => {
     activeUsers.set(socket.userId, {
       socketId: socket.id,
       username: socket.username,
-      activeChats: new Set()
+      currentRoom: null
     });
 
     // Broadcast online users to all clients
@@ -47,72 +47,64 @@ module.exports = (io) => {
       socket.emit('online_users', onlineUsers);
     });
 
-    // Open chat with another user
-    socket.on('open_chat', ({ targetUserId }) => {
-      const chatId = getChatId(socket.userId, targetUserId);
-      
-      // Add this chat to user's active chats
+    // Create or join a room
+    socket.on('join_room', ({ roomName }) => {
       const user = activeUsers.get(socket.userId);
-      if (user) {
-        user.activeChats.add(chatId);
+      if (!user) return;
+
+      // Leave current room if in one
+      if (user.currentRoom) {
+        leaveRoom(socket, user.currentRoom);
       }
 
-      // Initialize chat if it doesn't exist
-      if (!activeChats.has(chatId)) {
-        activeChats.set(chatId, {
-          users: new Set([socket.userId, targetUserId]),
+      // Create room if doesn't exist
+      if (!rooms.has(roomName)) {
+        rooms.set(roomName, {
+          users: new Set(),
           messages: []
         });
+        console.log(`🏠 Room created: ${roomName}`);
       }
 
-      // Join the socket room for this chat
-      socket.join(chatId);
+      const room = rooms.get(roomName);
+      room.users.add(socket.userId);
+      user.currentRoom = roomName;
 
-      // Send existing messages for this chat (only if chat is active)
-      const chat = activeChats.get(chatId);
-      socket.emit('chat_history', {
-        chatId,
-        messages: chat.messages
+      // Join the socket room
+      socket.join(roomName);
+
+      // Send existing messages for this room
+      socket.emit('room_joined', {
+        roomName,
+        messages: room.messages,
+        users: getRoomUsers(roomName)
       });
 
-      console.log(`📂 ${socket.username} opened chat: ${chatId}`);
+      // Notify others in the room
+      socket.to(roomName).emit('user_joined_room', {
+        userId: socket.userId,
+        username: socket.username,
+        users: getRoomUsers(roomName)
+      });
+
+      console.log(`✅ ${socket.username} joined room: ${roomName}`);
     });
 
-    // Close chat
-    socket.on('close_chat', ({ chatId }) => {
+    // Leave room
+    socket.on('leave_room', () => {
       const user = activeUsers.get(socket.userId);
-      if (user) {
-        user.activeChats.delete(chatId);
+      if (user && user.currentRoom) {
+        leaveRoom(socket, user.currentRoom);
       }
-
-      socket.leave(chatId);
-
-      // Check if anyone else is viewing this chat
-      const chat = activeChats.get(chatId);
-      if (chat) {
-        const isAnyoneViewing = Array.from(chat.users).some(userId => {
-          const user = activeUsers.get(userId);
-          return user && user.activeChats.has(chatId);
-        });
-
-        // If no one is viewing this chat, delete it
-        if (!isAnyoneViewing) {
-          activeChats.delete(chatId);
-          console.log(`🗑️  Chat deleted (no active viewers): ${chatId}`);
-        }
-      }
-
-      console.log(`📁 ${socket.username} closed chat: ${chatId}`);
     });
 
-    // Send message
-    socket.on('send_message', ({ targetUserId, message }) => {
-      const chatId = getChatId(socket.userId, targetUserId);
-      const chat = activeChats.get(chatId);
+    // Send message to room
+    socket.on('send_message', ({ message }) => {
+      const user = activeUsers.get(socket.userId);
+      if (!user || !user.currentRoom) return;
 
-      if (!chat) {
-        return; // Chat doesn't exist, message is lost (ephemeral)
-      }
+      const room = rooms.get(user.currentRoom);
+      if (!room) return;
 
       const messageData = {
         id: Date.now() + Math.random(),
@@ -122,22 +114,45 @@ module.exports = (io) => {
         timestamp: new Date().toISOString()
       };
 
-      // Only store message if chat is active
-      chat.messages.push(messageData);
+      // Store message in room
+      room.messages.push(messageData);
 
-      // Send message to all users in this chat room
-      io.to(chatId).emit('new_message', {
-        chatId,
+      // Send message to all users in the room
+      io.to(user.currentRoom).emit('new_message', {
+        roomName: user.currentRoom,
         message: messageData
       });
 
-      console.log(`💬 Message in ${chatId}: ${socket.username}: ${message}`);
+      console.log(`💬 Message in ${user.currentRoom}: ${socket.username}: ${message}`);
     });
 
-    // WebRTC signaling for voice calls
+    // Typing indicator for room
+    socket.on('typing_start', () => {
+      const user = activeUsers.get(socket.userId);
+      if (user && user.currentRoom) {
+        socket.to(user.currentRoom).emit('user_typing', {
+          userId: socket.userId,
+          username: socket.username
+        });
+      }
+    });
+
+    socket.on('typing_stop', () => {
+      const user = activeUsers.get(socket.userId);
+      if (user && user.currentRoom) {
+        socket.to(user.currentRoom).emit('user_stopped_typing', {
+          userId: socket.userId
+        });
+      }
+    });
+
+    // WebRTC signaling for voice calls (calls within a room)
     socket.on('call_user', ({ targetUserId, offer }) => {
       const targetUser = activeUsers.get(targetUserId);
-      if (targetUser) {
+      const user = activeUsers.get(socket.userId);
+      
+      // Only allow calls if both users are in the same room
+      if (targetUser && user && targetUser.currentRoom === user.currentRoom) {
         io.to(targetUser.socketId).emit('incoming_call', {
           from: socket.userId,
           fromUsername: socket.username,
@@ -175,50 +190,13 @@ module.exports = (io) => {
       }
     });
 
-    // Typing indicator
-    socket.on('typing_start', ({ targetUserId }) => {
-      const targetUser = activeUsers.get(targetUserId);
-      if (targetUser) {
-        io.to(targetUser.socketId).emit('user_typing', {
-          userId: socket.userId,
-          username: socket.username
-        });
-      }
-    });
-
-    socket.on('typing_stop', ({ targetUserId }) => {
-      const targetUser = activeUsers.get(targetUserId);
-      if (targetUser) {
-        io.to(targetUser.socketId).emit('user_stopped_typing', {
-          userId: socket.userId
-        });
-      }
-    });
-
     // Disconnect
     socket.on('disconnect', () => {
       console.log(`❌ User disconnected: ${socket.username}`);
 
-      // Get user's active chats before removing
       const user = activeUsers.get(socket.userId);
-      if (user && user.activeChats) {
-        // Close all active chats
-        user.activeChats.forEach(chatId => {
-          const chat = activeChats.get(chatId);
-          if (chat) {
-            const isAnyoneElseViewing = Array.from(chat.users).some(userId => {
-              if (userId === socket.userId) return false;
-              const otherUser = activeUsers.get(userId);
-              return otherUser && otherUser.activeChats.has(chatId);
-            });
-
-            // If no one else is viewing, delete the chat
-            if (!isAnyoneElseViewing) {
-              activeChats.delete(chatId);
-              console.log(`🗑️  Chat deleted on disconnect: ${chatId}`);
-            }
-          }
-        });
+      if (user && user.currentRoom) {
+        leaveRoom(socket, user.currentRoom);
       }
 
       // Remove user from active users
@@ -229,15 +207,49 @@ module.exports = (io) => {
     });
   });
 
+  // Helper function to leave a room
+  function leaveRoom(socket, roomName) {
+    const room = rooms.get(roomName);
+    const user = activeUsers.get(socket.userId);
+    
+    if (!room || !user) return;
+
+    room.users.delete(socket.userId);
+    user.currentRoom = null;
+    socket.leave(roomName);
+
+    // Notify others in the room
+    socket.to(roomName).emit('user_left_room', {
+      userId: socket.userId,
+      username: socket.username,
+      users: getRoomUsers(roomName)
+    });
+
+    // If room is empty, delete it
+    if (room.users.size === 0) {
+      rooms.delete(roomName);
+      console.log(`🗑️  Room deleted (empty): ${roomName}`);
+    } else {
+      console.log(`👋 ${socket.username} left room: ${roomName}`);
+    }
+  }
+
+  // Get list of users in a room
+  function getRoomUsers(roomName) {
+    const room = rooms.get(roomName);
+    if (!room) return [];
+
+    return Array.from(room.users).map(userId => {
+      const user = activeUsers.get(userId);
+      return user ? { userId, username: user.username } : null;
+    }).filter(Boolean);
+  }
+
   function broadcastOnlineUsers() {
     const onlineUsers = Array.from(activeUsers.entries()).map(([userId, data]) => ({
       userId,
       username: data.username
     }));
     io.emit('online_users', onlineUsers);
-  }
-
-  function getChatId(userId1, userId2) {
-    return [userId1, userId2].sort().join('_');
   }
 };

@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import ChatWindow from './ChatWindow';
+import RoomJoin from './RoomJoin';
 
 const ChatRoom = ({ user, token, onLogout }) => {
   const [socket, setSocket] = useState(null);
-  const [onlineUsers, setOnlineUsers] = useState([]);
-  const [activeChats, setActiveChats] = useState(new Map());
-  const [selectedUser, setSelectedUser] = useState(null);
+  const [currentRoom, setCurrentRoom] = useState(null);
+  const [roomUsers, setRoomUsers] = useState([]);
+  const [messages, setMessages] = useState([]);
   const socketRef = useRef(null);
 
   useEffect(() => {
     // Connect to Socket.IO server
-    // Use environment variable for production, fallback to localhost for development
     const serverUrl = process.env.REACT_APP_API_URL || 'https://ephemeral-chat-server.onrender.com';
     const newSocket = io(serverUrl, {
       auth: { token }
@@ -19,15 +19,35 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
     newSocket.on('connect', () => {
       console.log('Connected to server');
-      newSocket.emit('get_online_users');
-    });
-
-    newSocket.on('online_users', (users) => {
-      setOnlineUsers(users.filter(u => u.userId !== user.id));
     });
 
     newSocket.on('connect_error', (error) => {
       console.error('Connection error:', error);
+    });
+
+    // Room joined successfully
+    newSocket.on('room_joined', ({ roomName, messages, users }) => {
+      setCurrentRoom(roomName);
+      setMessages(messages);
+      setRoomUsers(users);
+      console.log(`Joined room: ${roomName}`);
+    });
+
+    // New message received
+    newSocket.on('new_message', ({ message }) => {
+      setMessages(prev => [...prev, message]);
+    });
+
+    // User joined the room
+    newSocket.on('user_joined_room', ({ username, users }) => {
+      setRoomUsers(users);
+      console.log(`${username} joined the room`);
+    });
+
+    // User left the room
+    newSocket.on('user_left_room', ({ username, users }) => {
+      setRoomUsers(users);
+      console.log(`${username} left the room`);
     });
 
     socketRef.current = newSocket;
@@ -36,90 +56,86 @@ const ChatRoom = ({ user, token, onLogout }) => {
     return () => {
       newSocket.close();
     };
-  }, [token, user.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
-  const handleUserClick = (clickedUser) => {
-    setSelectedUser(clickedUser);
-
-    // Open chat if not already open
-    if (!activeChats.has(clickedUser.userId)) {
-      socket.emit('open_chat', { targetUserId: clickedUser.userId });
-      setActiveChats(prev => new Map(prev).set(clickedUser.userId, {
-        user: clickedUser,
-        messages: []
-      }));
+  const handleJoinRoom = (roomName) => {
+    if (socket) {
+      socket.emit('join_room', { roomName });
     }
   };
 
-  const handleCloseChat = (userId) => {
-    socket.emit('close_chat', { chatId: getChatId(user.id, userId) });
-    
-    const newChats = new Map(activeChats);
-    newChats.delete(userId);
-    setActiveChats(newChats);
-
-    if (selectedUser?.userId === userId) {
-      setSelectedUser(null);
+  const handleLeaveRoom = () => {
+    if (socket && currentRoom) {
+      socket.emit('leave_room');
+      setCurrentRoom(null);
+      setMessages([]);
+      setRoomUsers([]);
     }
-  };
-
-  const getChatId = (userId1, userId2) => {
-    return [userId1, userId2].sort().join('_');
   };
 
   return (
     <div className="chat-container">
-      <div className="sidebar">
-        <div className="sidebar-header">
-          <div className="user-info">
-            <h3>{user.username}</h3>
-            <span>Online</span>
+      {!currentRoom ? (
+        <div className="room-join-wrapper">
+          <div className="room-join-header">
+            <div className="user-info">
+              <span>Logged in as: <strong>{user.username}</strong></span>
+            </div>
+            <button className="logout-btn" onClick={onLogout}>
+              Logout
+            </button>
           </div>
-          <button className="logout-btn" onClick={onLogout}>
-            Logout
-          </button>
+          <RoomJoin onJoinRoom={handleJoinRoom} />
         </div>
-
-        <div className="online-users">
-          <h4>Online Users ({onlineUsers.length})</h4>
-          {onlineUsers.length === 0 && (
-            <div style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
-              No other users online
+      ) : (
+        <>
+          <div className="sidebar">
+            <div className="sidebar-header">
+              <div className="user-info">
+                <h3>{user.username}</h3>
+                <span>Online</span>
+              </div>
+              <button className="logout-btn" onClick={onLogout}>
+                Logout
+              </button>
             </div>
-          )}
-          {onlineUsers.map((onlineUser) => (
-            <div
-              key={onlineUser.userId}
-              className={`user-item ${selectedUser?.userId === onlineUser.userId ? 'active' : ''}`}
-              onClick={() => handleUserClick(onlineUser)}
-            >
-              <div className="online-indicator"></div>
-              <span>{onlineUser.username}</span>
-            </div>
-          ))}
-        </div>
-      </div>
 
-      <div className="chat-main">
-        {selectedUser ? (
-          <ChatWindow
-            socket={socket}
-            currentUser={user}
-            targetUser={selectedUser}
-            onClose={() => handleCloseChat(selectedUser.userId)}
-          />
-        ) : (
-          <div className="no-chat-selected">
-            <div>
-              <h2>💬 Ephemeral Chat</h2>
-              <p>Select a user to start chatting</p>
-              <p style={{ fontSize: '0.9rem', marginTop: '10px', color: '#ccc' }}>
-                Remember: Messages disappear when you close the chat!
-              </p>
+            <div className="current-room">
+              <div className="room-name-header">
+                <h4>🏠 Current Room</h4>
+                <button className="leave-room-btn" onClick={handleLeaveRoom}>
+                  Leave Room
+                </button>
+              </div>
+              <div className="room-name">{currentRoom}</div>
+            </div>
+
+            <div className="room-users">
+              <h4>Users in Room ({roomUsers.length})</h4>
+              {roomUsers.map((roomUser) => (
+                <div key={roomUser.userId} className="user-item">
+                  <div className="online-indicator"></div>
+                  <span>{roomUser.username}</span>
+                  {roomUser.userId === user.id && (
+                    <span className="you-badge"> (you)</span>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        )}
-      </div>
+
+          <div className="chat-main">
+            <ChatWindow
+              socket={socket}
+              currentUser={user}
+              roomName={currentRoom}
+              messages={messages}
+              roomUsers={roomUsers}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 };
