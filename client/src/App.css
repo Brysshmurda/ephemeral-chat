@@ -29,7 +29,7 @@
 
 .auth-title {
   text-align: center;
-  color: #e53935;
+  color: #8B0000;
   margin-bottom: 30px;
   font-size: 2rem;
   font-weight: bold;
@@ -54,7 +54,7 @@
 }
 
 .auth-tab.active {
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
 }
 
@@ -85,13 +85,13 @@
 
 .form-group input:focus {
   outline: none;
-  border-color: #e53935;
+  border-color: #8B0000;
 }
 
 .submit-btn {
   padding: 14px;
   border: none;
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
   border-radius: 10px;
   font-size: 1rem;
@@ -138,7 +138,7 @@
 
 .sidebar-header {
   padding: 20px;
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
   display: flex;
   justify-content: space-between;
@@ -195,13 +195,13 @@
 }
 
 .user-item:hover {
-  background: #e53935;
+  background: #8B0000;
   color: white;
   transform: translateX(5px);
 }
 
 .user-item.active {
-  background: #e53935;
+  background: #8B0000;
   color: white;
 }
 
@@ -288,7 +288,7 @@
 }
 
 .message.own .message-content {
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
 }
 
@@ -296,7 +296,7 @@
   font-weight: 600;
   font-size: 0.85rem;
   margin-bottom: 4px;
-  color: #e53935;
+  color: #8B0000;
 }
 
 .message.own .message-sender {
@@ -339,12 +339,12 @@
 }
 
 .message-input:focus {
-  border-color: #e53935;
+  border-color: #8B0000;
 }
 
 .send-btn {
   padding: 12px 24px;
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
   border: none;
   border-radius: 25px;
@@ -368,7 +368,7 @@
 }
 
 .no-chat-selected h2 {
-  color: #e53935;
+  color: #8B0000;
   margin-bottom: 10px;
 }
 
@@ -379,7 +379,7 @@
 }
 
 .welcome-features h3 {
-  color: #e53935;
+  color: #8B0000;
   margin-bottom: 15px;
   font-size: 1.2rem;
 }
@@ -490,7 +490,7 @@
 .room-name-badge {
   flex: 1;
   padding: 12px;
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
   border-radius: 10px;
   font-weight: 600;
@@ -522,7 +522,7 @@
 .join-room-trigger-btn {
   width: 100%;
   padding: 12px;
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
   border: none;
   border-radius: 10px;
@@ -552,7 +552,7 @@
 
 .room-name-input:focus {
   outline: none;
-  border-color: #e53935;
+  border-color: #8B0000;
 }
 
 .room-error {
@@ -623,7 +623,7 @@
 }
 
 .you-badge {
-  color: #e53935;
+  color: #8B0000;
   font-size: 0.85rem;
   font-weight: 600;
 }
@@ -671,7 +671,7 @@
 
 .user-item.active-dm {
   background: rgba(229, 57, 53, 0.2);
-  border-left: 3px solid #e53935;
+  border-left: 3px solid #8B0000;
 }
 
 .dm-badge {
@@ -689,7 +689,7 @@
 
 .voice-menu-toggle {
   padding: 12px 20px;
-  background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+  background: linear-gradient(135deg, #8B0000 0%, #5C0000 100%);
   color: white;
   border: none;
   border-radius: 25px;
