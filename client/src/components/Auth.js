@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 
 const Auth = ({ onLogin }) => {
   const [username, setUsername] = useState('');
@@ -12,10 +12,10 @@ const Auth = ({ onLogin }) => {
     setLoading(true);
 
     try {
-      const response = await axios.post('/api/auth/register', { username });
+      const response = await api.post('/api/auth/register', { username });
       onLogin(response.data.token, response.data.user);
     } catch (err) {
-      setError(err.response?.data?.error || 'An error occurred');
+      setError(err.response?.data?.error || 'Cannot connect to server. Please try again.');
     } finally {
       setLoading(false);
     }
