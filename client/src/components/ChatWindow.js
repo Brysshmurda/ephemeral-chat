@@ -57,6 +57,7 @@ const ChatWindow = ({ socket, currentUser, targetUser, onClose }) => {
       socket.off('ice_candidate');
       socket.off('call_ended');
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, chatId, targetUser.userId]);
 
   useEffect(() => {
