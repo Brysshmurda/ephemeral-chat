@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 const Auth = ({ onLogin }) => {
-  const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -14,9 +12,7 @@ const Auth = ({ onLogin }) => {
     setLoading(true);
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const response = await axios.post(endpoint, { username, password });
-
+      const response = await axios.post('/api/auth/register', { username });
       onLogin(response.data.token, response.data.user);
     } catch (err) {
       setError(err.response?.data?.error || 'An error occurred');
@@ -29,58 +25,41 @@ const Auth = ({ onLogin }) => {
     <div className="auth-container">
       <h1 className="auth-title">💬 Ephemeral Chat</h1>
       
-      <div className="auth-tabs">
-        <button
-          className={`auth-tab ${isLogin ? 'active' : ''}`}
-          onClick={() => setIsLogin(true)}
-        >
-          Login
-        </button>
-        <button
-          className={`auth-tab ${!isLogin ? 'active' : ''}`}
-          onClick={() => setIsLogin(false)}
-        >
-          Register
-        </button>
+      <div style={{ textAlign: 'center', marginBottom: '25px', color: '#667eea', fontSize: '1.1rem', fontWeight: '600' }}>
+        Join the Chat
       </div>
 
       <form className="auth-form" onSubmit={handleSubmit}>
         <div className="form-group">
-          <label>Username</label>
+          <label>Choose a Username</label>
           <input
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="Enter username"
+            placeholder="Enter your username"
             required
             minLength={3}
             maxLength={20}
+            autoFocus
           />
-        </div>
-
-        <div className="form-group">
-          <label>Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter password"
-            required
-            minLength={6}
-          />
+          <div style={{ fontSize: '0.8rem', color: '#999', marginTop: '5px' }}>
+            3-20 characters, no password needed
+          </div>
         </div>
 
         {error && <div className="error-message">{error}</div>}
 
         <button type="submit" className="submit-btn" disabled={loading}>
-          {loading ? 'Please wait...' : (isLogin ? 'Login' : 'Register')}
+          {loading ? 'Joining...' : 'Join Chat'}
         </button>
       </form>
 
-      <div style={{ marginTop: '20px', textAlign: 'center', color: '#666', fontSize: '0.9rem' }}>
-        <strong>🔥 FULLY EPHEMERAL:</strong> Messages AND accounts disappear when the server restarts!
-        <div style={{ marginTop: '5px', fontSize: '0.8rem' }}>
-          No database - everything exists only in memory
+      <div style={{ marginTop: '25px', textAlign: 'center', color: '#666', fontSize: '0.9rem' }}>
+        <strong>🔥 FULLY EPHEMERAL:</strong> No registration required!
+        <div style={{ marginTop: '8px', fontSize: '0.85rem', lineHeight: '1.5' }}>
+          • Messages disappear when chats close<br/>
+          • Usernames reset when server restarts<br/>
+          • No data stored anywhere
         </div>
       </div>
     </div>

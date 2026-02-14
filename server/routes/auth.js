@@ -4,16 +4,16 @@ const jwt = require('jsonwebtoken');
 const router = express.Router();
 
 // In-memory user storage (ephemeral - lost on server restart)
-const ephemeralUsers = new Map(); // username -> { password, userId }
+const ephemeralUsers = new Map(); // username -> userId
 
-// Simple session-based registration (no persistence)
+// Simple username-only registration (no password needed!)
 router.post('/register', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username } = req.body;
 
     // Validation
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
     }
 
     if (username.length < 3 || username.length > 20) {
@@ -22,12 +22,12 @@ router.post('/register', async (req, res) => {
 
     // Check if username is taken (in this session)
     if (ephemeralUsers.has(username)) {
-      return res.status(400).json({ error: 'Username already taken in this session' });
+      return res.status(400).json({ error: 'Username already taken - choose another' });
     }
 
     // Create ephemeral user
     const userId = Date.now().toString() + Math.random().toString(36);
-    ephemeralUsers.set(username, { password, userId });
+    ephemeralUsers.set(username, userId);
 
     // Generate token
     const token = jwt.sign(
@@ -36,10 +36,10 @@ router.post('/register', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    console.log(`✅ User registered (ephemeral): ${username}`);
+    console.log(`✅ User joined (ephemeral): ${username}`);
 
     res.status(201).json({
-      message: 'Session created successfully',
+      message: 'Joined successfully',
       token,
       user: {
         id: userId,
@@ -48,45 +48,6 @@ router.post('/register', async (req, res) => {
     });
   } catch (error) {
     console.error('Register error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Simple login (checks ephemeral storage)
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    // Validation
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-
-    // Find user in ephemeral storage
-    const user = ephemeralUsers.get(username);
-    if (!user || user.password !== password) {
-      return res.status(401).json({ error: 'Invalid credentials or session expired' });
-    }
-
-    // Generate token
-    const token = jwt.sign(
-      { userId: user.userId, username },
-      process.env.JWT_SECRET || 'ephemeral_secret_key',
-      { expiresIn: '24h' }
-    );
-
-    console.log(`✅ User logged in (ephemeral): ${username}`);
-
-    res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user.userId,
-        username
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
