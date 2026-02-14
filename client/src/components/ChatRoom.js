@@ -12,7 +12,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
   useEffect(() => {
     // Connect to Socket.IO server
     // Use environment variable for production, fallback to localhost for development
-    const serverUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+    const serverUrl = process.env.REACT_APP_API_URL || 'https://ephemeral-chat-server.onrender.com/';
     const newSocket = io(serverUrl, {
       auth: { token }
     });
