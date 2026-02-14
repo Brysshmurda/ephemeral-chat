@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 // Structure: { userId: { socketId, username, currentRoom: roomName } }
 const activeUsers = new Map();
 
-// Structure: { roomName: { users: Set[userId], messages: [] } }
+// Structure: { roomName: { users: Set[userId], messages: [], activeCall: Set[userId] } }
 const rooms = new Map();
 
 module.exports = (io) => {
@@ -61,7 +61,8 @@ module.exports = (io) => {
       if (!rooms.has(roomName)) {
         rooms.set(roomName, {
           users: new Set(),
-          messages: []
+          messages: [],
+          activeCall: new Set()
         });
         console.log(`🏠 Room created: ${roomName}`);
       }
@@ -146,46 +147,85 @@ module.exports = (io) => {
       }
     });
 
-    // WebRTC signaling for voice calls (calls within a room)
-    socket.on('call_user', ({ targetUserId, offer }) => {
+    // Group call - Join call
+    socket.on('join_call', () => {
+      const user = activeUsers.get(socket.userId);
+      if (!user || !user.currentRoom) return;
+
+      const room = rooms.get(user.currentRoom);
+      if (!room) return;
+
+      // Get current call participants before adding this user
+      const currentParticipants = Array.from(room.activeCall).map(userId => {
+        const participant = activeUsers.get(userId);
+        return participant ? { userId, username: participant.username } : null;
+      }).filter(Boolean);
+
+      // Add user to active call
+      room.activeCall.add(socket.userId);
+
+      // Notify the joining user of all current participants
+      socket.emit('call_participants', {
+        participants: currentParticipants
+      });
+
+      // Notify all other participants that a new user joined
+      socket.to(user.currentRoom).emit('user_joined_call', {
+        userId: socket.userId,
+        username: socket.username
+      });
+
+      console.log(`📞 ${socket.username} joined call in ${user.currentRoom}`);
+    });
+
+    // Group call - Leave call
+    socket.on('leave_call', () => {
+      const user = activeUsers.get(socket.userId);
+      if (!user || !user.currentRoom) return;
+
+      const room = rooms.get(user.currentRoom);
+      if (!room) return;
+
+      room.activeCall.delete(socket.userId);
+
+      // Notify all participants that user left
+      socket.to(user.currentRoom).emit('user_left_call', {
+        userId: socket.userId
+      });
+
+      console.log(`📞 ${socket.username} left call in ${user.currentRoom}`);
+    });
+
+    // WebRTC signaling for group calls
+    socket.on('webrtc_offer', ({ targetUserId, offer }) => {
       const targetUser = activeUsers.get(targetUserId);
       const user = activeUsers.get(socket.userId);
       
       // Only allow calls if both users are in the same room
       if (targetUser && user && targetUser.currentRoom === user.currentRoom) {
-        io.to(targetUser.socketId).emit('incoming_call', {
+        io.to(targetUser.socketId).emit('webrtc_offer', {
           from: socket.userId,
-          fromUsername: socket.username,
           offer
         });
       }
     });
 
-    socket.on('answer_call', ({ targetUserId, answer }) => {
+    socket.on('webrtc_answer', ({ targetUserId, answer }) => {
       const targetUser = activeUsers.get(targetUserId);
       if (targetUser) {
-        io.to(targetUser.socketId).emit('call_answered', {
+        io.to(targetUser.socketId).emit('webrtc_answer', {
           from: socket.userId,
           answer
         });
       }
     });
 
-    socket.on('ice_candidate', ({ targetUserId, candidate }) => {
+    socket.on('webrtc_ice_candidate', ({ targetUserId, candidate }) => {
       const targetUser = activeUsers.get(targetUserId);
       if (targetUser) {
-        io.to(targetUser.socketId).emit('ice_candidate', {
+        io.to(targetUser.socketId).emit('webrtc_ice_candidate', {
           from: socket.userId,
           candidate
-        });
-      }
-    });
-
-    socket.on('end_call', ({ targetUserId }) => {
-      const targetUser = activeUsers.get(targetUserId);
-      if (targetUser) {
-        io.to(targetUser.socketId).emit('call_ended', {
-          from: socket.userId
         });
       }
     });
@@ -213,6 +253,14 @@ module.exports = (io) => {
     const user = activeUsers.get(socket.userId);
     
     if (!room || !user) return;
+
+    // Remove from active call if in one
+    if (room.activeCall.has(socket.userId)) {
+      room.activeCall.delete(socket.userId);
+      socket.to(roomName).emit('user_left_call', {
+        userId: socket.userId
+      });
+    }
 
     room.users.delete(socket.userId);
     user.currentRoom = null;
