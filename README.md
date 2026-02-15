@@ -84,6 +84,7 @@ PORT=5000
 JWT_SECRET=change_this_in_production
 CLIENT_URL=http://localhost:3000
 NODE_ENV=development
+LOG_LEVEL=none
 
 # Optional debug logging (privacy-safe default is false)
 SOCKET_DEBUG_LOGS=false
@@ -130,6 +131,7 @@ Recommended free setup:
 
 - Messages are not stored in a database.
 - User sessions are ephemeral (reset on server restart).
+- Set `LOG_LEVEL=none` to suppress nearly all server logs.
 - Sensitive socket/auth logs are off by default.
 
 ## Troubleshooting

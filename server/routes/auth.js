@@ -2,7 +2,9 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 
 const router = express.Router();
-const shouldDebugLog = process.env.AUTH_DEBUG_LOGS === 'true';
+const logLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const shouldDebugLog = process.env.AUTH_DEBUG_LOGS === 'true' && logLevel === 'debug';
+const canErrorLog = logLevel !== 'none';
 
 // In-memory user storage (ephemeral - lost on server restart)
 const ephemeralUsers = new Map(); // username -> userId
@@ -50,7 +52,9 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Register error');
+    if (canErrorLog) {
+      console.error('Register error');
+    }
     res.status(500).json({ error: 'Server error' });
   }
 });

@@ -6,6 +6,8 @@ require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
 const socketHandler = require('./sockets/socketHandler');
+const logLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const canInfoLog = logLevel !== 'none' && logLevel !== 'error';
 
 const app = express();
 const server = http.createServer(app);
@@ -22,7 +24,9 @@ app.use(cors());
 app.use(express.json());
 
 // NO DATABASE - Everything is ephemeral!
-console.log('🔥 Running in FULLY EPHEMERAL mode - no database!');
+if (canInfoLog) {
+  console.log('🔥 Running in FULLY EPHEMERAL mode - no database!');
+}
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -36,5 +40,7 @@ socketHandler(io);
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  if (canInfoLog) {
+    console.log(`🚀 Server running on port ${PORT}`);
+  }
 });

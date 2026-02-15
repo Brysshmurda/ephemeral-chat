@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
-const shouldDebugLog = process.env.SOCKET_DEBUG_LOGS === 'true';
+const logLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const shouldDebugLog = process.env.SOCKET_DEBUG_LOGS === 'true' && logLevel === 'debug';
 
 const maskId = (value) => {
   const stringValue = String(value || 'unknown');
