@@ -330,11 +330,6 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   };
 
   const toggleCamera = async () => {
-    if (isScreenSharing) {
-      showNotice('Stop screen sharing before turning camera on.', 'info');
-      return;
-    }
-
     const cameraTrack = cameraTrackRef.current;
     if (!cameraTrack) {
       showNotice('Camera not available. Check browser camera permissions.', 'error');
@@ -342,6 +337,11 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     }
 
     const nextCameraOn = !isCameraOn;
+
+    if (nextCameraOn && isScreenSharing) {
+      await stopScreenShare();
+    }
+
     cameraTrack.enabled = nextCameraOn;
     setIsCameraOn(nextCameraOn);
 
