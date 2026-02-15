@@ -28,6 +28,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
   const [appNotice, setAppNotice] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [connectionErrorDetail, setConnectionErrorDetail] = useState('');
+  const [socketTargetUrl, setSocketTargetUrl] = useState('');
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [directMessages, setDirectMessages] = useState(() => loadSessionObject(DM_MESSAGES_STORAGE_KEY)); // userId -> messages[]
   const [activeDM, setActiveDM] = useState(null); // userId of active DM conversation
@@ -58,10 +59,17 @@ const ChatRoom = ({ user, token, onLogout }) => {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const configuredUrl = process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL.replace(/\/$/, '') : '';
     const serverUrl = configuredUrl || (isLocalhost ? 'http://localhost:5000' : '');
+    setSocketTargetUrl(serverUrl || 'not-set');
 
     if (!serverUrl) {
       setConnectionStatus('config_error');
       setConnectionErrorDetail('Missing REACT_APP_API_URL for production build');
+      return undefined;
+    }
+
+    if (window.location.protocol === 'https:' && serverUrl.startsWith('http://')) {
+      setConnectionStatus('config_error');
+      setConnectionErrorDetail('HTTPS page cannot connect to HTTP backend URL');
       return undefined;
     }
 
@@ -398,7 +406,8 @@ const ChatRoom = ({ user, token, onLogout }) => {
               : connectionStatus === 'config_error'
                 ? 'Connection config issue (check API URL / CLIENT_URL)'
                 : 'Reconnecting...'}
-            {isDev && connectionErrorDetail ? ` • ${connectionErrorDetail}` : ''}
+            {connectionErrorDetail ? ` • ${connectionErrorDetail}` : ''}
+            {socketTargetUrl ? ` • socket: ${socketTargetUrl}` : ''}
           </div>
         )}
 
