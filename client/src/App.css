@@ -842,6 +842,28 @@
   flex-wrap: wrap;
 }
 
+.call-action-btn {
+  padding: 10px 14px;
+  background: #ffffff;
+  border: 1px solid #d2d8e1;
+  border-radius: 10px;
+  color: #2f3747;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.call-action-btn:hover {
+  border-color: #8B0000;
+  color: #8B0000;
+}
+
+.call-action-btn.active {
+  background: rgba(139, 0, 0, 0.09);
+  border-color: #8B0000;
+  color: #8B0000;
+}
+
 .voice-call-btn.video {
   background: linear-gradient(135deg, #1976d2 0%, #1259a1 100%);
 }

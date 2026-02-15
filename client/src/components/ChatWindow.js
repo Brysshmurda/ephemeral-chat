@@ -4,7 +4,10 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const [messageInput, setMessageInput] = useState('');
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [isInCall, setIsInCall] = useState(false);
-  const [callMode, setCallMode] = useState(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isDeafened, setIsDeafened] = useState(false);
+  const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState({});
   const [gifUrlInput, setGifUrlInput] = useState('');
   const [notice, setNotice] = useState('');
@@ -15,6 +18,9 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const peerConnectionsRef = useRef(new Map()); // Map of roomName:userId -> RTCPeerConnection
   const localStreamRef = useRef(null);
   const localVideoRef = useRef(null);
+  const audioTrackRef = useRef(null);
+  const cameraTrackRef = useRef(null);
+  const screenTrackRef = useRef(null);
 
   const showNotice = (message, type = 'info') => {
     setNotice(message);
@@ -74,11 +80,39 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   }, [roomName]);
 
   useEffect(() => {
-    if (callMode === 'video' && localVideoRef.current && localStreamRef.current) {
+    if (!isInCall || !localVideoRef.current) return;
+
+    if (isScreenSharing && screenTrackRef.current) {
+      localVideoRef.current.srcObject = new MediaStream([screenTrackRef.current]);
+      localVideoRef.current.play().catch(() => {});
+      return;
+    }
+
+    if ((isCameraOn || cameraTrackRef.current?.enabled) && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
       localVideoRef.current.play().catch(() => {});
+    } else {
+      localVideoRef.current.srcObject = null;
     }
-  }, [callMode, isInCall]);
+  }, [isInCall, isCameraOn, isScreenSharing]);
+
+  const getRoomPeerConnections = () => {
+    return Array.from(peerConnectionsRef.current.entries())
+      .filter(([key]) => key.startsWith(`${roomName}:`))
+      .map(([, pc]) => pc);
+  };
+
+  const replaceVideoTrackForPeers = async (nextTrack) => {
+    const peerConnections = getRoomPeerConnections();
+    await Promise.all(
+      peerConnections.map(async (peerConnection) => {
+        const videoSender = peerConnection.getSenders().find((sender) => sender.track?.kind === 'video');
+        if (videoSender) {
+          await videoSender.replaceTrack(nextTrack || null);
+        }
+      })
+    );
+  };
 
   useEffect(() => {
     scrollToBottom();
@@ -192,29 +226,47 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   };
 
   // Group call functions
-  const joinCall = async (withVideo = false) => {
+  const joinCall = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: withVideo
-      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true
+        });
+      } catch (cameraError) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false
+        });
+        showNotice('Joined voice call. Camera permission is off.', 'info');
+      }
 
-      if (withVideo) {
-        const videoTrack = stream.getVideoTracks()[0];
-        if (!videoTrack) {
-          showNotice('Camera was not found. Joined as voice call.', 'error');
-        }
+      const audioTrack = stream.getAudioTracks()[0] || null;
+      const cameraTrack = stream.getVideoTracks()[0] || null;
+
+      if (audioTrack) {
+        audioTrack.enabled = true;
+      }
+
+      if (cameraTrack) {
+        cameraTrack.enabled = false;
       }
 
       localStreamRef.current = stream;
+      audioTrackRef.current = audioTrack;
+      cameraTrackRef.current = cameraTrack;
+      screenTrackRef.current = null;
 
       if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.play().catch(() => {});
+        localVideoRef.current.srcObject = null;
       }
 
       setIsInCall(true);
-      setCallMode(withVideo ? 'video' : 'audio');
+      setIsMuted(false);
+      setIsDeafened(false);
+      setIsCameraOn(false);
+      setIsScreenSharing(false);
 
       // Notify server that we're joining the call
       socket.emit('join_call', { roomName });
@@ -238,6 +290,14 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       localStreamRef.current = null;
     }
 
+    if (screenTrackRef.current) {
+      screenTrackRef.current.stop();
+      screenTrackRef.current = null;
+    }
+
+    audioTrackRef.current = null;
+    cameraTrackRef.current = null;
+
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
     }
@@ -245,11 +305,118 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     setRemoteStreams({});
 
     setIsInCall(false);
-    setCallMode(null);
+    setIsMuted(false);
+    setIsDeafened(false);
+    setIsCameraOn(false);
+    setIsScreenSharing(false);
 
     // Notify server
     if (notifyServer && !isDM) {
       socket.emit('leave_call', { roomName });
+    }
+  };
+
+  const toggleMute = () => {
+    const audioTrack = audioTrackRef.current;
+    if (!audioTrack) return;
+
+    const nextMuted = !isMuted;
+    audioTrack.enabled = !nextMuted;
+    setIsMuted(nextMuted);
+  };
+
+  const toggleDeafen = () => {
+    setIsDeafened((prev) => !prev);
+  };
+
+  const toggleCamera = async () => {
+    if (isScreenSharing) {
+      showNotice('Stop screen sharing before turning camera on.', 'info');
+      return;
+    }
+
+    const cameraTrack = cameraTrackRef.current;
+    if (!cameraTrack) {
+      showNotice('Camera not available. Check browser camera permissions.', 'error');
+      return;
+    }
+
+    const nextCameraOn = !isCameraOn;
+    cameraTrack.enabled = nextCameraOn;
+    setIsCameraOn(nextCameraOn);
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = nextCameraOn ? localStreamRef.current : null;
+      if (nextCameraOn) {
+        localVideoRef.current.play().catch(() => {});
+      }
+    }
+  };
+
+  const stopScreenShare = async () => {
+    if (!screenTrackRef.current) return;
+
+    const currentScreenTrack = screenTrackRef.current;
+    currentScreenTrack.onended = null;
+    currentScreenTrack.stop();
+    screenTrackRef.current = null;
+
+    const fallbackTrack = cameraTrackRef.current || null;
+    if (fallbackTrack) {
+      fallbackTrack.enabled = isCameraOn;
+    }
+
+    await replaceVideoTrackForPeers(fallbackTrack);
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = isCameraOn ? localStreamRef.current : null;
+      if (isCameraOn) {
+        localVideoRef.current.play().catch(() => {});
+      }
+    }
+
+    setIsScreenSharing(false);
+  };
+
+  const toggleScreenShare = async () => {
+    if (isScreenSharing) {
+      await stopScreenShare();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      showNotice('Screen sharing is not supported in this browser.', 'error');
+      return;
+    }
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false
+      });
+
+      const screenTrack = displayStream.getVideoTracks()[0];
+      if (!screenTrack) {
+        showNotice('No display source selected.', 'error');
+        return;
+      }
+
+      screenTrackRef.current = screenTrack;
+      screenTrack.onended = () => {
+        stopScreenShare();
+      };
+
+      await replaceVideoTrackForPeers(screenTrack);
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = new MediaStream([screenTrack]);
+        localVideoRef.current.play().catch(() => {});
+      }
+
+      setIsScreenSharing(true);
+      showNotice('Screen sharing started.', 'success');
+    } catch (error) {
+      showNotice('Could not start screen sharing.', 'error');
     }
   };
 
@@ -470,27 +637,45 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         {!isDM && (
           <div className="call-controls">
             {isInCall ? (
-              <button
-                className="voice-call-btn calling"
-                onClick={() => leaveCall(true)}
-              >
-                📞 Leave {callMode === 'video' ? 'Video' : 'Voice'} Call
-              </button>
-            ) : (
               <>
                 <button
-                  className="voice-call-btn"
-                  onClick={() => joinCall(false)}
+                  className={`call-action-btn ${isMuted ? 'active' : ''}`}
+                  onClick={toggleMute}
                 >
-                  📞 Join Voice
+                  {isMuted ? '🎙️ Unmute' : '🔇 Mute'}
                 </button>
                 <button
-                  className="voice-call-btn video"
-                  onClick={() => joinCall(true)}
+                  className={`call-action-btn ${isDeafened ? 'active' : ''}`}
+                  onClick={toggleDeafen}
                 >
-                  📹 Join Video
+                  {isDeafened ? '🔊 Undeafen' : '🙉 Deafen'}
+                </button>
+                <button
+                  className={`call-action-btn ${isCameraOn ? 'active' : ''}`}
+                  onClick={toggleCamera}
+                >
+                  {isCameraOn ? '📷 Camera Off' : '📷 Camera On'}
+                </button>
+                <button
+                  className={`call-action-btn ${isScreenSharing ? 'active' : ''}`}
+                  onClick={toggleScreenShare}
+                >
+                  {isScreenSharing ? '🖥️ Stop Share' : '🖥️ Share Screen'}
+                </button>
+                <button
+                  className="voice-call-btn calling"
+                  onClick={() => leaveCall(true)}
+                >
+                  📞 Leave Call
                 </button>
               </>
+            ) : (
+              <button
+                className="voice-call-btn"
+                onClick={joinCall}
+              >
+                📞 Join Call
+              </button>
             )}
           </div>
         )}
@@ -498,10 +683,10 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
       {!isDM && isInCall && (
         <div className="video-grid">
-          {callMode === 'video' && (
+          {(isCameraOn || isScreenSharing) && (
             <div className="video-tile">
               <video ref={localVideoRef} autoPlay muted playsInline className="remote-video" />
-              <span className="video-label">You</span>
+              <span className="video-label">You {isScreenSharing ? '(Sharing)' : ''}</span>
             </div>
           )}
           {Object.entries(remoteStreams).map(([userId, stream]) => (
@@ -509,10 +694,12 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
               <video
                 autoPlay
                 playsInline
+                muted={isDeafened}
                 className="remote-video"
                 ref={(element) => {
                   if (element) {
                     element.srcObject = stream;
+                    element.play().catch(() => {});
                   }
                 }}
               />
