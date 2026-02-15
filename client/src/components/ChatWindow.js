@@ -688,6 +688,11 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   const callParticipantsCount = Object.keys(remoteStreams).length + (isInCall ? 1 : 0);
 
+  const getUserDisplayName = (userId) => {
+    const roomUser = roomUsers.find((member) => String(member.userId) === String(userId));
+    return roomUser?.username || `User ${String(userId).slice(0, 6)}`;
+  };
+
   const renderMessageBody = (msg) => {
     const messageText = typeof msg.message === 'string' ? msg.message : '';
     const isImageDataUrl = messageText.startsWith('data:image/');
@@ -866,13 +871,13 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
                 </>
               ) : (
                 <div className="media-preview-placeholder">
-                  <div className="media-preview-title">User {userId} is sharing media</div>
+                  <div className="media-preview-title">{getUserDisplayName(userId)} is sharing media</div>
                   <button type="button" className="call-action-btn active" onClick={() => toggleRemoteVisibility(userId)}>
                     View Stream
                   </button>
                 </div>
               )}
-              <span className="video-label">User {userId}</span>
+              <span className="video-label">{getUserDisplayName(userId)}</span>
             </div>
           );})}
         </div>
@@ -882,7 +887,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         <div className="focused-media-overlay" onClick={() => setFocusedMediaUserId(null)}>
           <div className="focused-media-content" onClick={(event) => event.stopPropagation()}>
             <div className="focused-media-header">
-              <strong>User {focusedMediaUserId}</strong>
+              <strong>{getUserDisplayName(focusedMediaUserId)}</strong>
               <button type="button" className="call-action-btn" onClick={() => setFocusedMediaUserId(null)}>Close</button>
             </div>
             <video ref={focusedVideoRef} className="focused-media-video" autoPlay playsInline />
