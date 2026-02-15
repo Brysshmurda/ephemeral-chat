@@ -74,6 +74,13 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   }, [roomName]);
 
   useEffect(() => {
+    if (callMode === 'video' && localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+      localVideoRef.current.play().catch(() => {});
+    }
+  }, [callMode, isInCall]);
+
+  useEffect(() => {
     scrollToBottom();
   }, [roomMessages]);
 
@@ -191,10 +198,19 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         audio: true,
         video: withVideo
       });
+
+      if (withVideo) {
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) {
+          showNotice('Camera was not found. Joined as voice call.', 'error');
+        }
+      }
+
       localStreamRef.current = stream;
 
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
       }
 
       setIsInCall(true);
