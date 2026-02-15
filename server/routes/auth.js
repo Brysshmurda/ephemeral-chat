@@ -3,7 +3,8 @@ const jwt = require('jsonwebtoken');
 
 const router = express.Router();
 const logLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
-const shouldDebugLog = process.env.AUTH_DEBUG_LOGS === 'true' && logLevel === 'debug';
+const diagnosticsEnabled = process.env.ENABLE_DIAGNOSTIC_LOGS === 'true';
+const shouldDebugLog = diagnosticsEnabled && process.env.AUTH_DEBUG_LOGS === 'true' && logLevel === 'debug';
 const canErrorLog = logLevel !== 'none';
 
 // In-memory user storage (ephemeral - lost on server restart)

@@ -85,6 +85,7 @@ JWT_SECRET=change_this_in_production
 CLIENT_URL=http://localhost:3000
 NODE_ENV=development
 LOG_LEVEL=none
+ENABLE_DIAGNOSTIC_LOGS=false
 
 # Optional debug logging (privacy-safe default is false)
 SOCKET_DEBUG_LOGS=false

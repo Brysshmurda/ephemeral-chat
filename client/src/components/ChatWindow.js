@@ -26,7 +26,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const noticeTimeoutRef = useRef(null);
   const peerConnectionsRef = useRef(new Map()); // Map of roomName:userId -> RTCPeerConnection
   const localStreamRef = useRef(null);
-  const localVideoRef = useRef(null);
+  const localCameraVideoRef = useRef(null);
+  const localScreenVideoRef = useRef(null);
   const remoteVideoRefs = useRef({});
   const focusedVideoRef = useRef(null);
   const audioTrackRef = useRef(null);
@@ -91,19 +92,24 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   }, [roomName]);
 
   useEffect(() => {
-    if (!isInCall || !localVideoRef.current) return;
+    if (!isInCall) return;
 
-    if (isScreenSharing && screenTrackRef.current) {
-      localVideoRef.current.srcObject = new MediaStream([screenTrackRef.current]);
-      localVideoRef.current.play().catch(() => {});
-      return;
+    if (localCameraVideoRef.current) {
+      if ((isCameraOn || cameraTrackRef.current?.enabled) && localStreamRef.current) {
+        localCameraVideoRef.current.srcObject = localStreamRef.current;
+        localCameraVideoRef.current.play().catch(() => {});
+      } else {
+        localCameraVideoRef.current.srcObject = null;
+      }
     }
 
-    if ((isCameraOn || cameraTrackRef.current?.enabled) && localStreamRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
-      localVideoRef.current.play().catch(() => {});
-    } else {
-      localVideoRef.current.srcObject = null;
+    if (localScreenVideoRef.current) {
+      if (isScreenSharing && screenTrackRef.current) {
+        localScreenVideoRef.current.srcObject = new MediaStream([screenTrackRef.current]);
+        localScreenVideoRef.current.play().catch(() => {});
+      } else {
+        localScreenVideoRef.current.srcObject = null;
+      }
     }
   }, [isInCall, isCameraOn, isScreenSharing]);
 
@@ -398,8 +404,11 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       cameraTrackRef.current = cameraTrack;
       screenTrackRef.current = null;
 
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = null;
+      if (localCameraVideoRef.current) {
+        localCameraVideoRef.current.srcObject = null;
+      }
+      if (localScreenVideoRef.current) {
+        localScreenVideoRef.current.srcObject = null;
       }
 
       setIsInCall(true);
@@ -438,8 +447,11 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     audioTrackRef.current = null;
     cameraTrackRef.current = null;
 
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
+    if (localCameraVideoRef.current) {
+      localCameraVideoRef.current.srcObject = null;
+    }
+    if (localScreenVideoRef.current) {
+      localScreenVideoRef.current.srcObject = null;
     }
 
     setRemoteStreams({});
@@ -554,18 +566,12 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
     const nextCameraOn = !isCameraOn;
 
-    if (nextCameraOn && isScreenSharing) {
-      await stopScreenShare();
-    }
-
     cameraTrack.enabled = nextCameraOn;
     setIsCameraOn(nextCameraOn);
 
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = nextCameraOn ? localStreamRef.current : null;
-      if (nextCameraOn) {
-        localVideoRef.current.play().catch(() => {});
-      }
+    if (localCameraVideoRef.current && nextCameraOn) {
+      localCameraVideoRef.current.srcObject = localStreamRef.current;
+      localCameraVideoRef.current.play().catch(() => {});
     }
   };
 
@@ -584,11 +590,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
     await replaceVideoTrackForPeers(fallbackTrack);
 
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = isCameraOn ? localStreamRef.current : null;
-      if (isCameraOn) {
-        localVideoRef.current.play().catch(() => {});
-      }
+    if (localScreenVideoRef.current) {
+      localScreenVideoRef.current.srcObject = null;
     }
 
     setIsScreenSharing(false);
@@ -624,9 +627,9 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
       await replaceVideoTrackForPeers(screenTrack);
 
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = new MediaStream([screenTrack]);
-        localVideoRef.current.play().catch(() => {});
+      if (localScreenVideoRef.current) {
+        localScreenVideoRef.current.srcObject = new MediaStream([screenTrack]);
+        localScreenVideoRef.current.play().catch(() => {});
       }
 
       setIsScreenSharing(true);
@@ -820,7 +823,12 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   const getUserDisplayName = (userId) => {
     const roomUser = roomUsers.find((member) => String(member.userId) === String(userId));
-    return roomUser?.username || `User ${String(userId).slice(0, 6)}`;
+    if (!roomUser) {
+      return `User ${String(userId).slice(0, 6)}`;
+    }
+
+    const isOwner = roomMeta?.ownerId && String(roomMeta.ownerId) === String(roomUser.userId);
+    return isOwner ? `${roomUser.username} (owner)` : roomUser.username;
   };
 
   const amIMutedInRoom = !isDM && Array.isArray(roomMeta?.mutedUserIds) && roomMeta.mutedUserIds.includes(currentUser.id);
@@ -954,10 +962,16 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
       {!isDM && isInCall && (
         <div className="video-grid">
-          {(isCameraOn || isScreenSharing) && (
+          {isCameraOn && (
             <div className="video-tile">
-              <video ref={localVideoRef} autoPlay muted playsInline className="remote-video" />
-              <span className="video-label">You {isScreenSharing ? '(Sharing)' : ''}</span>
+              <video ref={localCameraVideoRef} autoPlay muted playsInline className="remote-video" />
+              <span className="video-label">You (Camera)</span>
+            </div>
+          )}
+          {isScreenSharing && (
+            <div className="video-tile">
+              <video ref={localScreenVideoRef} autoPlay muted playsInline className="remote-video" />
+              <span className="video-label">You (Sharing)</span>
             </div>
           )}
           {Object.entries(remoteStreams).map(([userId, stream]) => {

@@ -452,6 +452,9 @@ const ChatRoom = ({ user, token, onLogout }) => {
               <div key={roomUser.userId} className="user-item">
                 <div className="online-indicator"></div>
                 <span>{roomUser.username}</span>
+                {currentRoomMeta.ownerId === roomUser.userId && (
+                  <span className="you-badge"> (owner)</span>
+                )}
                 {roomUser.userId === user.id && (
                   <span className="you-badge"> (you)</span>
                 )}
