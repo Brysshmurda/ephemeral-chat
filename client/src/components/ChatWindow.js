@@ -9,6 +9,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState({});
+  const [remoteMediaControls, setRemoteMediaControls] = useState({});
+  const [focusedMediaUserId, setFocusedMediaUserId] = useState(null);
   const [gifUrlInput, setGifUrlInput] = useState('');
   const [notice, setNotice] = useState('');
   const [noticeType, setNoticeType] = useState('info');
@@ -18,6 +20,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const peerConnectionsRef = useRef(new Map()); // Map of roomName:userId -> RTCPeerConnection
   const localStreamRef = useRef(null);
   const localVideoRef = useRef(null);
+  const remoteVideoRefs = useRef({});
+  const focusedVideoRef = useRef(null);
   const audioTrackRef = useRef(null);
   const cameraTrackRef = useRef(null);
   const screenTrackRef = useRef(null);
@@ -95,6 +99,41 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       localVideoRef.current.srcObject = null;
     }
   }, [isInCall, isCameraOn, isScreenSharing]);
+
+  useEffect(() => {
+    Object.entries(remoteStreams).forEach(([userId, stream]) => {
+      const controls = remoteMediaControls[userId] || {
+        isVisible: false,
+        volume: 1,
+        isMuted: false,
+        zoom: 1
+      };
+
+      const videoElement = remoteVideoRefs.current[userId];
+      if (videoElement && controls.isVisible) {
+        if (videoElement.srcObject !== stream) {
+          videoElement.srcObject = stream;
+        }
+
+        videoElement.muted = isDeafened || controls.isMuted;
+        videoElement.volume = isDeafened ? 0 : controls.volume;
+        videoElement.play().catch(() => {});
+      }
+    });
+  }, [remoteStreams, remoteMediaControls, isDeafened]);
+
+  useEffect(() => {
+    if (!focusedMediaUserId || !focusedVideoRef.current) return;
+
+    const stream = remoteStreams[focusedMediaUserId];
+    const controls = remoteMediaControls[focusedMediaUserId];
+    if (!stream || !controls?.isVisible) return;
+
+    focusedVideoRef.current.srcObject = stream;
+    focusedVideoRef.current.muted = isDeafened || controls.isMuted;
+    focusedVideoRef.current.volume = isDeafened ? 0 : controls.volume;
+    focusedVideoRef.current.play().catch(() => {});
+  }, [focusedMediaUserId, remoteStreams, remoteMediaControls, isDeafened]);
 
   const getRoomPeerConnections = () => {
     return Array.from(peerConnectionsRef.current.entries())
@@ -303,6 +342,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     }
 
     setRemoteStreams({});
+    setRemoteMediaControls({});
+    setFocusedMediaUserId(null);
 
     setIsInCall(false);
     setIsMuted(false);
@@ -314,6 +355,51 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     if (notifyServer && !isDM) {
       socket.emit('leave_call', { roomName });
     }
+  };
+
+  const updateRemoteMediaControls = (userId, updater) => {
+    setRemoteMediaControls((prev) => {
+      const current = prev[userId] || {
+        isVisible: false,
+        volume: 1,
+        isMuted: false,
+        zoom: 1
+      };
+
+      const nextValue = typeof updater === 'function' ? updater(current) : { ...current, ...updater };
+      return {
+        ...prev,
+        [userId]: nextValue
+      };
+    });
+  };
+
+  const toggleRemoteVisibility = (userId) => {
+    updateRemoteMediaControls(userId, (current) => ({
+      ...current,
+      isVisible: !current.isVisible
+    }));
+  };
+
+  const setRemoteVolume = (userId, volumeValue) => {
+    updateRemoteMediaControls(userId, (current) => ({
+      ...current,
+      volume: volumeValue
+    }));
+  };
+
+  const toggleRemoteMute = (userId) => {
+    updateRemoteMediaControls(userId, (current) => ({
+      ...current,
+      isMuted: !current.isMuted
+    }));
+  };
+
+  const setRemoteZoom = (userId, zoomValue) => {
+    updateRemoteMediaControls(userId, (current) => ({
+      ...current,
+      zoom: zoomValue
+    }));
   };
 
   const toggleMute = () => {
@@ -454,6 +540,16 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       delete next[userId];
       return next;
     });
+
+    setRemoteMediaControls((prev) => {
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
+
+    if (focusedMediaUserId === userId) {
+      setFocusedMediaUserId(null);
+    }
   };
 
   // Create a peer connection with another user
@@ -495,12 +591,30 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         ...prev,
         [userId]: event.streams[0]
       }));
+
+      setRemoteMediaControls((prev) => {
+        if (prev[userId]) return prev;
+        return {
+          ...prev,
+          [userId]: {
+            isVisible: false,
+            volume: 1,
+            isMuted: false,
+            zoom: 1
+          }
+        };
+      });
     };
 
     peerConnection.onconnectionstatechange = () => {
       if (['failed', 'closed', 'disconnected'].includes(peerConnection.connectionState)) {
         peerConnectionsRef.current.delete(connectionKey);
         setRemoteStreams((prev) => {
+          const next = { ...prev };
+          delete next[userId];
+          return next;
+        });
+        setRemoteMediaControls((prev) => {
           const next = { ...prev };
           delete next[userId];
           return next;
@@ -689,23 +803,90 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
               <span className="video-label">You {isScreenSharing ? '(Sharing)' : ''}</span>
             </div>
           )}
-          {Object.entries(remoteStreams).map(([userId, stream]) => (
+          {Object.entries(remoteStreams).map(([userId, stream]) => {
+            const controls = remoteMediaControls[userId] || {
+              isVisible: false,
+              volume: 1,
+              isMuted: false,
+              zoom: 1
+            };
+
+            return (
             <div key={userId} className="video-tile">
-              <video
-                autoPlay
-                playsInline
-                muted={isDeafened}
-                className="remote-video"
-                ref={(element) => {
-                  if (element) {
-                    element.srcObject = stream;
-                    element.play().catch(() => {});
-                  }
-                }}
-              />
+              {controls.isVisible ? (
+                <>
+                  <video
+                    autoPlay
+                    playsInline
+                    className="remote-video"
+                    style={{ transform: `scale(${controls.zoom})`, transformOrigin: 'center center' }}
+                    ref={(element) => {
+                      remoteVideoRefs.current[userId] = element;
+                      if (element) {
+                        element.srcObject = stream;
+                        element.muted = isDeafened || controls.isMuted;
+                        element.volume = isDeafened ? 0 : controls.volume;
+                        element.play().catch(() => {});
+                      }
+                    }}
+                  />
+                  <div className="remote-media-controls">
+                    <button type="button" className="call-action-btn" onClick={() => toggleRemoteVisibility(userId)}>
+                      Hide
+                    </button>
+                    <button type="button" className={`call-action-btn ${controls.isMuted ? 'active' : ''}`} onClick={() => toggleRemoteMute(userId)}>
+                      {controls.isMuted ? 'Unmute User' : 'Mute User'}
+                    </button>
+                    <label className="remote-slider-label">
+                      Vol
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={controls.volume}
+                        onChange={(event) => setRemoteVolume(userId, Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="remote-slider-label">
+                      Zoom
+                      <input
+                        type="range"
+                        min="1"
+                        max="2.5"
+                        step="0.1"
+                        value={controls.zoom}
+                        onChange={(event) => setRemoteZoom(userId, Number(event.target.value))}
+                      />
+                    </label>
+                    <button type="button" className="call-action-btn" onClick={() => setFocusedMediaUserId(userId)}>
+                      Focus
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="media-preview-placeholder">
+                  <div className="media-preview-title">User {userId} is sharing media</div>
+                  <button type="button" className="call-action-btn active" onClick={() => toggleRemoteVisibility(userId)}>
+                    View Stream
+                  </button>
+                </div>
+              )}
               <span className="video-label">User {userId}</span>
             </div>
-          ))}
+          );})}
+        </div>
+      )}
+
+      {focusedMediaUserId && remoteStreams[focusedMediaUserId] && (
+        <div className="focused-media-overlay" onClick={() => setFocusedMediaUserId(null)}>
+          <div className="focused-media-content" onClick={(event) => event.stopPropagation()}>
+            <div className="focused-media-header">
+              <strong>User {focusedMediaUserId}</strong>
+              <button type="button" className="call-action-btn" onClick={() => setFocusedMediaUserId(null)}>Close</button>
+            </div>
+            <video ref={focusedVideoRef} className="focused-media-video" autoPlay playsInline />
+          </div>
         </div>
       )}
 
