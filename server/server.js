@@ -9,7 +9,10 @@ const socketHandler = require('./sockets/socketHandler');
 const logLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
 const canInfoLog = logLevel !== 'none' && logLevel !== 'error';
 
-const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/$/, '');
+const normalizeOrigin = (origin) => String(origin || '')
+  .trim()
+  .replace(/^['\"]|['\"]$/g, '')
+  .replace(/\/$/, '');
 const allowedOrigins = (process.env.CLIENT_URLS || process.env.CLIENT_URL || 'http://localhost:3000')
   .split(',')
   .map((origin) => normalizeOrigin(origin))
@@ -23,6 +26,10 @@ const isOriginAllowed = (origin) => {
   const normalizedOrigin = normalizeOrigin(origin);
 
   if (allowedOrigins.includes(normalizedOrigin)) {
+    return true;
+  }
+
+  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(normalizedOrigin)) {
     return true;
   }
 
