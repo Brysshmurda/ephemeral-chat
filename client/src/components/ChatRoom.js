@@ -27,6 +27,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
   const [roomError, setRoomError] = useState('');
   const [appNotice, setAppNotice] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connecting');
+  const [connectionErrorDetail, setConnectionErrorDetail] = useState('');
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [directMessages, setDirectMessages] = useState(() => loadSessionObject(DM_MESSAGES_STORAGE_KEY)); // userId -> messages[]
   const [activeDM, setActiveDM] = useState(null); // userId of active DM conversation
@@ -56,13 +57,21 @@ const ChatRoom = ({ user, token, onLogout }) => {
     // Connect to Socket.IO server
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const configuredUrl = process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL.replace(/\/$/, '') : '';
-    const serverUrl = configuredUrl || (isLocalhost ? 'http://localhost:5000' : window.location.origin);
+    const serverUrl = configuredUrl || (isLocalhost ? 'http://localhost:5000' : '');
+
+    if (!serverUrl) {
+      setConnectionStatus('config_error');
+      setConnectionErrorDetail('Missing REACT_APP_API_URL for production build');
+      return undefined;
+    }
+
     const newSocket = io(serverUrl, {
       auth: { token }
     });
 
     newSocket.on('connect', () => {
       setConnectionStatus('connected');
+      setConnectionErrorDetail('');
       if (isDev) {
         console.log('Connected to server');
       }
@@ -77,9 +86,27 @@ const ChatRoom = ({ user, token, onLogout }) => {
       const isConfigIssue =
         errorMessage.includes('cors') ||
         errorMessage.includes('socket cors blocked') ||
-        errorMessage.includes('authentication error');
+        errorMessage.includes('authentication error') ||
+        errorMessage.includes('invalid namespace') ||
+        errorMessage.includes('parse error') ||
+        errorMessage.includes('certificate') ||
+        errorMessage.includes('mixed content');
 
-      setConnectionStatus(isConfigIssue ? 'config_error' : 'waking');
+      const isLikelyColdStart =
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('xhr poll error') ||
+        errorMessage.includes('websocket error') ||
+        errorMessage.includes('transport error');
+
+      if (isConfigIssue) {
+        setConnectionStatus('config_error');
+      } else if (isLikelyColdStart) {
+        setConnectionStatus('waking');
+      } else {
+        setConnectionStatus('reconnecting');
+      }
+
+      setConnectionErrorDetail(error?.message || 'Unknown connection error');
       if (isDev) {
         console.error('Connection error:', error);
       }
@@ -371,6 +398,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
               : connectionStatus === 'config_error'
                 ? 'Connection config issue (check API URL / CLIENT_URL)'
                 : 'Reconnecting...'}
+            {isDev && connectionErrorDetail ? ` • ${connectionErrorDetail}` : ''}
           </div>
         )}
 

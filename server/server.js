@@ -19,6 +19,24 @@ if (!allowedOrigins.includes('http://localhost:3000')) {
   allowedOrigins.push('http://localhost:3000');
 }
 
+const isOriginAllowed = (origin) => {
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  if (allowedOrigins.includes(normalizedOrigin)) {
+    return true;
+  }
+
+  return allowedOrigins.some((allowedOrigin) => {
+    if (!allowedOrigin.includes('*')) return false;
+
+    const wildcardRegex = new RegExp(`^${allowedOrigin
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*')}$`);
+
+    return wildcardRegex.test(normalizedOrigin);
+  });
+};
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
@@ -31,7 +49,7 @@ const io = socketIO(server, {
       }
 
       const cleanedOrigin = normalizeOrigin(origin);
-      if (allowedOrigins.includes(cleanedOrigin)) {
+      if (isOriginAllowed(cleanedOrigin)) {
         callback(null, true);
         return;
       }
