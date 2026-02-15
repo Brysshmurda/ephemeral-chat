@@ -116,7 +116,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   useEffect(() => {
     Object.entries(remoteStreams).forEach(([userId, stream]) => {
       const controls = remoteMediaControls[userId] || {
-        isVisible: false,
+        isVisible: true,
         volume: 1,
         isMuted: false,
         zoom: 1
@@ -140,7 +140,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
     const stream = remoteStreams[focusedMediaUserId];
     const controls = remoteMediaControls[focusedMediaUserId];
-    if (!stream || !controls?.isVisible) return;
+    if (!stream) return;
 
     focusedVideoRef.current.srcObject = stream;
     focusedVideoRef.current.muted = isDeafened || controls.isMuted;
@@ -476,7 +476,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const updateRemoteMediaControls = (userId, updater) => {
     setRemoteMediaControls((prev) => {
       const current = prev[userId] || {
-        isVisible: false,
+        isVisible: true,
         volume: 1,
         isMuted: false,
         zoom: 1
@@ -730,7 +730,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         return {
           ...prev,
           [userId]: {
-            isVisible: false,
+            isVisible: true,
             volume: 1,
             isMuted: false,
             zoom: 1
@@ -976,7 +976,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
           )}
           {Object.entries(remoteStreams).map(([userId, stream]) => {
             const controls = remoteMediaControls[userId] || {
-              isVisible: false,
+                isVisible: true,
               volume: 1,
               isMuted: false,
               zoom: 1
@@ -984,69 +984,68 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
             return (
             <div key={userId} className="video-tile">
-              {controls.isVisible ? (
-                <>
-                  <video
-                    autoPlay
-                    playsInline
-                    className="remote-video"
-                    style={{ transform: `scale(${controls.zoom})`, transformOrigin: 'center center' }}
-                    ref={(element) => {
-                      remoteVideoRefs.current[userId] = element;
-                      if (element) {
-                        element.srcObject = stream;
-                        element.muted = isDeafened || controls.isMuted;
-                        element.volume = isDeafened ? 0 : controls.volume;
-                        element.play().catch(() => {});
-                      }
-                    }}
-                  />
-                  <div className="remote-media-controls">
-                    <button type="button" className="call-action-btn" onClick={() => toggleRemoteVisibility(userId)}>
-                      Hide
-                    </button>
-                    <button type="button" className={`call-action-btn ${controls.isMuted ? 'active' : ''}`} onClick={() => toggleRemoteMute(userId)}>
-                      {controls.isMuted ? 'Unmute User' : 'Mute User'}
-                    </button>
-                    <label className="remote-slider-label">
-                      Vol
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={controls.volume}
-                        onChange={(event) => setRemoteVolume(userId, Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="remote-slider-label">
-                      Zoom
-                      <input
-                        type="range"
-                        min="1"
-                        max="2.5"
-                        step="0.1"
-                        value={controls.zoom}
-                        onChange={(event) => setRemoteZoom(userId, Number(event.target.value))}
-                      />
-                    </label>
-                    <button type="button" className="call-action-btn" onClick={() => setFocusedMediaUserId(userId)}>
-                      Focus
-                    </button>
-                  </div>
-                </>
-              ) : (
+                <div className="remote-video-wrap">
+                  {controls.isVisible ? (
+                    <video
+                      autoPlay
+                      playsInline
+                      className="remote-video"
+                      style={{ transform: `scale(${controls.zoom})`, transformOrigin: 'center center' }}
+                      ref={(element) => {
+                        remoteVideoRefs.current[userId] = element;
+                        if (element) {
+                          element.srcObject = stream;
+                          element.muted = isDeafened || controls.isMuted;
+                          element.volume = isDeafened ? 0 : controls.volume;
+                          element.play().catch(() => {});
+                        }
+                      }}
+                    />
+                  ) : (
                 <div className="media-preview-placeholder">
-                  <div className="media-preview-title">{getUserDisplayName(userId)} is sharing media</div>
-                  <button type="button" className="call-action-btn active" onClick={() => toggleRemoteVisibility(userId)}>
-                    View Stream
-                  </button>
+                    <div className="media-preview-title">{getUserDisplayName(userId)} hidden</div>
                 </div>
               )}
-              <span className="video-label">{getUserDisplayName(userId)}</span>
-              {peerQuality[userId] && (
-                <span className="video-quality-badge">{peerQuality[userId]}</span>
-              )}
+                </div>
+                <div className="video-meta-row">
+                  <span className="video-chip">{getUserDisplayName(userId)}</span>
+                  {peerQuality[userId] && (
+                    <span className="video-quality-chip">{peerQuality[userId]}</span>
+                  )}
+                </div>
+                <div className="remote-media-controls">
+                  <button type="button" className="call-action-btn" onClick={() => toggleRemoteVisibility(userId)}>
+                    {controls.isVisible ? 'Hide' : 'Show'}
+                  </button>
+                  <button type="button" className={`call-action-btn ${controls.isMuted ? 'active' : ''}`} onClick={() => toggleRemoteMute(userId)}>
+                    {controls.isMuted ? 'Unmute User' : 'Mute User'}
+                  </button>
+                  <label className="remote-slider-label">
+                    Vol
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={controls.volume}
+                      onChange={(event) => setRemoteVolume(userId, Number(event.target.value))}
+                    />
+                  </label>
+                  <label className="remote-slider-label">
+                    Zoom
+                    <input
+                      type="range"
+                      min="1"
+                      max="2.5"
+                      step="0.1"
+                      value={controls.zoom}
+                      onChange={(event) => setRemoteZoom(userId, Number(event.target.value))}
+                    />
+                  </label>
+                  <button type="button" className="call-action-btn" onClick={() => setFocusedMediaUserId(userId)}>
+                    Focus
+                  </button>
+                </div>
             </div>
           );})}
         </div>
