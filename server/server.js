@@ -29,10 +29,6 @@ const isOriginAllowed = (origin) => {
     return true;
   }
 
-  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(normalizedOrigin)) {
-    return true;
-  }
-
   return allowedOrigins.some((allowedOrigin) => {
     if (!allowedOrigin.includes('*')) return false;
 

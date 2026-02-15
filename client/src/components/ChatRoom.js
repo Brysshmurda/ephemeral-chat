@@ -416,8 +416,8 @@ const ChatRoom = ({ user, token, onLogout }) => {
               : connectionStatus === 'config_error'
                 ? 'Connection config issue (check API URL / CLIENT_URL)'
                 : 'Reconnecting...'}
-            {connectionErrorDetail ? ` • ${connectionErrorDetail}` : ''}
-            {socketTargetUrl ? ` • socket: ${socketTargetUrl}` : ''}
+            {isDev && connectionErrorDetail ? ` • ${connectionErrorDetail}` : ''}
+            {isDev && socketTargetUrl ? ` • socket: ${socketTargetUrl}` : ''}
           </div>
         )}
 
