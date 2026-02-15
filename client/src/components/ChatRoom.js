@@ -73,7 +73,14 @@ const ChatRoom = ({ user, token, onLogout }) => {
     });
 
     newSocket.on('connect_error', (error) => {
-      setConnectionStatus('waking');
+      const errorMessage = String(error?.message || '').toLowerCase();
+      const isConfigIssue =
+        errorMessage.includes('cors') ||
+        errorMessage.includes('xhr poll error') ||
+        errorMessage.includes('websocket error') ||
+        errorMessage.includes('authentication error');
+
+      setConnectionStatus(isConfigIssue ? 'config_error' : 'waking');
       if (isDev) {
         console.error('Connection error:', error);
       }
@@ -360,7 +367,11 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
         {connectionStatus !== 'connected' && (
           <div className="connection-banner">
-            {connectionStatus === 'waking' ? 'Server waking up... reconnecting' : 'Reconnecting...'}
+            {connectionStatus === 'waking'
+              ? 'Server waking up... reconnecting'
+              : connectionStatus === 'config_error'
+                ? 'Connection config issue (check API URL / CLIENT_URL)'
+                : 'Reconnecting...'}
           </div>
         )}
 
