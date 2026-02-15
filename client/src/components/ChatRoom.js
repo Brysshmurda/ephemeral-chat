@@ -76,8 +76,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
       const errorMessage = String(error?.message || '').toLowerCase();
       const isConfigIssue =
         errorMessage.includes('cors') ||
-        errorMessage.includes('xhr poll error') ||
-        errorMessage.includes('websocket error') ||
+        errorMessage.includes('socket cors blocked') ||
         errorMessage.includes('authentication error');
 
       setConnectionStatus(isConfigIssue ? 'config_error' : 'waking');
