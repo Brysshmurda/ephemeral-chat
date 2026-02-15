@@ -372,6 +372,7 @@ module.exports = (io) => {
 
     // If room is empty, delete it
     if (room.users.size === 0) {
+      io.emit('room_cleared', { roomName });
       rooms.delete(roomName);
       debugLog('room_deleted', { roomLength: roomName.length });
     } else {
@@ -415,6 +416,7 @@ module.exports = (io) => {
     });
 
     if (room.users.size === 0) {
+      io.emit('room_cleared', { roomName });
       rooms.delete(roomName);
       return;
     }

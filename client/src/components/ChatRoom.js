@@ -156,6 +156,22 @@ const ChatRoom = ({ user, token, onLogout }) => {
       setRoomMetaByRoom((prev) => ({ ...prev, [roomName]: { ownerId, mutedUserIds } }));
     });
 
+    newSocket.on('room_cleared', ({ roomName }) => {
+      if (!roomName) return;
+
+      setRoomMessagesByRoom((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, roomName)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[roomName];
+        return next;
+      });
+
+      setUnreadRooms((prev) => ({ ...prev, [roomName]: 0 }));
+      setMentionRooms((prev) => ({ ...prev, [roomName]: 0 }));
+    });
+
     newSocket.on('user_removed_from_room', ({ roomName }) => {
       setJoinedRooms((prev) => prev.filter((room) => room !== roomName));
       setRoomUsersByRoom((prev) => {
@@ -218,6 +234,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
     setSocket(newSocket);
 
     return () => {
+      newSocket.off('room_cleared');
       newSocket.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
