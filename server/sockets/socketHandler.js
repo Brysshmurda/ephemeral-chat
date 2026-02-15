@@ -130,7 +130,6 @@ module.exports = (io) => {
         message: messageData
       });
 
-      debugLog('room_message', { userId: maskId(socket.userId), messageType });
     });
 
     // Send direct message to specific user
@@ -156,11 +155,6 @@ module.exports = (io) => {
       // Send back to sender as confirmation
       socket.emit('direct_message_sent', messageData);
 
-      debugLog('direct_message', {
-        senderId: maskId(socket.userId),
-        targetId: maskId(targetUserId),
-        messageType
-      });
     });
 
     // Typing indicator for room
