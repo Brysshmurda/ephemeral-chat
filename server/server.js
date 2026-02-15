@@ -13,8 +13,12 @@ const normalizeOrigin = (origin) => String(origin || '')
   .trim()
   .replace(/^['\"]|['\"]$/g, '')
   .replace(/\/$/, '');
-const allowedOrigins = (process.env.CLIENT_URLS || process.env.CLIENT_URL || 'http://localhost:3000')
-  .split(',')
+const configuredOrigins = [process.env.CLIENT_URLS, process.env.CLIENT_URL]
+  .filter(Boolean)
+  .join(',');
+
+const allowedOrigins = (configuredOrigins || 'http://localhost:3000')
+  .split(/[,\n;]/)
   .map((origin) => normalizeOrigin(origin))
   .filter(Boolean);
 

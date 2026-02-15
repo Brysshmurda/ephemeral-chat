@@ -105,6 +105,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
         errorMessage.includes('cors') ||
         errorMessage.includes('socket cors blocked') ||
         errorMessage.includes('authentication error') ||
+        errorMessage.includes('websocket error') ||
         errorMessage.includes('invalid namespace') ||
         errorMessage.includes('parse error') ||
         errorMessage.includes('certificate') ||
@@ -113,7 +114,6 @@ const ChatRoom = ({ user, token, onLogout }) => {
       const isLikelyColdStart =
         errorMessage.includes('timeout') ||
         errorMessage.includes('xhr poll error') ||
-        errorMessage.includes('websocket error') ||
         errorMessage.includes('transport error');
 
       if (isConfigIssue) {
