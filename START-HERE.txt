@@ -124,7 +124,7 @@ Customize your app:
 □ Change app title in client/public/index.html
 □ Customize colors in client/src/App.css
 □ Add your name/branding
-□ Update the "Ephemeral Chat" title
+□ Update the "Ghost Chat" title
 
 
 🐛 TROUBLESHOOTING:
@@ -155,7 +155,7 @@ Problem: Voice calls don't work
 🎉 THAT'S IT!
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Your ephemeral chat app is ready to share with the world!
+Your Ghost Chat app is ready to share with the world!
 
 Remember:
 ✨ Messages disappear when chats close

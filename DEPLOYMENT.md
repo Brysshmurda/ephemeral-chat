@@ -38,7 +38,7 @@ git init
 git add .
 
 # Commit
-git commit -m "Initial commit - Ephemeral Chat App"
+git commit -m "Initial commit - Ghost Chat App"
 
 # Connect to GitHub (replace YOUR-USERNAME with your GitHub username)
 git remote add origin https://github.com/YOUR-USERNAME/ephemeral-chat.git

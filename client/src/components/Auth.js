@@ -23,7 +23,7 @@ const Auth = ({ onLogin }) => {
 
   return (
     <div className="auth-container">
-      <h1 className="auth-title">💬 Ephemeral Chat</h1>
+      <h1 className="auth-title">💬 Ghost Chat</h1>
       
       <div style={{ textAlign: 'center', marginBottom: '25px', color: '#667eea', fontSize: '1.1rem', fontWeight: '600' }}>
         Join the Chat

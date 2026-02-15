@@ -303,7 +303,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
         ) : (
           <div className="no-chat-selected">
             <div>
-              <h2>💬 Ephemeral Chat</h2>
+              <h2>💬 Ghost Chat</h2>
               <p>👈 Join a room or message a user to start chatting</p>
               <div className="welcome-features">
                 <h3>Features:</h3>

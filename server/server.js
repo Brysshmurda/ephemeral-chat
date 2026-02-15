@@ -27,7 +27,7 @@ console.log('🔥 Running in FULLY EPHEMERAL mode - no database!');
 app.use('/api/auth', authRoutes);
 
 app.get('/', (req, res) => {
-  res.send('Ephemeral Chat Server Running - Fully Ephemeral Mode');
+  res.send('Ghost Chat Server Running - Fully Ephemeral Mode');
 });
 
 // Socket.IO handler

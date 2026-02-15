@@ -1,6 +1,6 @@
 # 🚀 Quick Start Guide
 
-This guide will get you up and running with the Ephemeral Chat app in 2 minutes!
+This guide will get you up and running with the Ghost Chat app in 2 minutes!
 
 ## Prerequisites Checklist
 

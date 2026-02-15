@@ -1,4 +1,4 @@
-# Ephemeral Chat - Production Setup Guide
+# Ghost Chat - Production Setup Guide
 
 Welcome! Follow these steps to deploy and share your chat app.
 
@@ -32,7 +32,7 @@ Railway is the simplest way to deploy both frontend and backend together.
    git add .
    
    # Create first commit
-   git commit -m "Initial commit - Ephemeral Chat App"
+   git commit -m "Initial commit - Ghost Chat App"
    ```
 
 4. **Create GitHub Repository**
