@@ -26,6 +26,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
   const [newRoomName, setNewRoomName] = useState('');
   const [roomError, setRoomError] = useState('');
   const [appNotice, setAppNotice] = useState('');
+  const [messageNotice, setMessageNotice] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [connectionErrorDetail, setConnectionErrorDetail] = useState('');
   const [socketTargetUrl, setSocketTargetUrl] = useState('');
@@ -37,6 +38,26 @@ const ChatRoom = ({ user, token, onLogout }) => {
   const [unreadDMs, setUnreadDMs] = useState({});
   const currentRoomRef = useRef(null);
   const activeDMRef = useRef(null);
+  const messageNoticeTimeoutRef = useRef(null);
+
+  const showRealtimeMessageNotice = (text) => {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+      return;
+    }
+
+    setMessageNotice(text);
+    clearTimeout(messageNoticeTimeoutRef.current);
+    messageNoticeTimeoutRef.current = setTimeout(() => {
+      setMessageNotice('');
+    }, 2800);
+  };
+
+  const formatMessagePreview = (message, messageType = 'text') => {
+    if (messageType === 'emoji') return message;
+    if (messageType === 'gif') return 'sent a GIF';
+    if (messageType === 'image') return 'sent an image';
+    return String(message || '').slice(0, 80);
+  };
 
   useEffect(() => {
     currentRoomRef.current = currentRoom;
@@ -158,6 +179,10 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
     // New message received
     newSocket.on('new_message', ({ roomName, message }) => {
+      if (message?.senderId !== user.id) {
+        showRealtimeMessageNotice(`#${roomName} • ${message?.senderUsername}: ${formatMessagePreview(message?.message, message?.messageType)}`);
+      }
+
       setRoomMessagesByRoom((prev) => {
         const roomMessages = prev[roomName] || [];
         return {
@@ -253,6 +278,10 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
     // Direct message received
     newSocket.on('direct_message_received', (messageData) => {
+      if (messageData?.senderId !== user.id) {
+        showRealtimeMessageNotice(`DM • ${messageData?.senderUsername}: ${formatMessagePreview(messageData?.message, messageData?.messageType)}`);
+      }
+
       setDirectMessages((prev) => {
         const userId = messageData.senderId;
         const existingMessages = prev[userId] || [];
@@ -285,6 +314,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
     setSocket(newSocket);
 
     return () => {
+      clearTimeout(messageNoticeTimeoutRef.current);
       newSocket.off('room_cleared');
       newSocket.close();
     };
@@ -354,6 +384,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
   const handleSelectRoom = (roomName) => {
     setCurrentRoom(roomName);
+    setActiveDM(null);
     setUnreadRooms((prev) => ({ ...prev, [roomName]: 0 }));
     setMentionRooms((prev) => ({ ...prev, [roomName]: 0 }));
   };
@@ -583,17 +614,13 @@ const ChatRoom = ({ user, token, onLogout }) => {
       </div>
 
       <div className="chat-main">
-        {currentRoom ? (
-          <ChatWindow
-            socket={socket}
-            currentUser={user}
-            roomName={currentRoom}
-            messages={currentRoomMessages}
-            roomUsers={currentRoomUsers}
-            roomMeta={currentRoomMeta}
-            isDM={false}
-          />
-        ) : activeDM ? (
+        {messageNotice && (
+          <div className="message-toast" role="status" aria-live="polite">
+            {messageNotice}
+          </div>
+        )}
+
+        {activeDM ? (
           <ChatWindow
             socket={socket}
             currentUser={user}
@@ -603,6 +630,16 @@ const ChatRoom = ({ user, token, onLogout }) => {
             roomUsers={[]}
             isDM={true}
             onCloseDM={() => setActiveDM(null)}
+          />
+        ) : currentRoom ? (
+          <ChatWindow
+            socket={socket}
+            currentUser={user}
+            roomName={currentRoom}
+            messages={currentRoomMessages}
+            roomUsers={currentRoomUsers}
+            roomMeta={currentRoomMeta}
+            isDM={false}
           />
         ) : (
           <div className="no-chat-selected">
