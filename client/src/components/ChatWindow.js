@@ -16,15 +16,17 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   useEffect(() => {
     // Listen for typing indicators
     socket.on('user_typing', (data) => {
-      if (isDM || data.roomName !== roomName) return;
+      if (isDM || (data.roomName && data.roomName !== roomName)) return;
       setTypingUsers(prev => new Set(prev).add(data.username));
     });
 
     socket.on('user_stopped_typing', (data) => {
-      if (isDM || data.roomName !== roomName) return;
+      if (isDM || (data.roomName && data.roomName !== roomName)) return;
       setTypingUsers(prev => {
         const newSet = new Set(prev);
-        newSet.delete(data.username);
+        if (data.username) {
+          newSet.delete(data.username);
+        }
         return newSet;
       });
     });
@@ -217,7 +219,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   // Called when we first join a call - get list of existing participants
   const handleCallParticipants = async ({ participants, roomName: eventRoomName }) => {
-    if (eventRoomName !== roomName) return;
+    if (eventRoomName && eventRoomName !== roomName) return;
 
     // Create peer connections with all existing participants
     for (const participant of participants) {
@@ -227,16 +229,15 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   // Called when another user joins the call
   const handleUserJoinedCall = async ({ userId, roomName: eventRoomName }) => {
-    if (eventRoomName !== roomName) return;
+    if (eventRoomName && eventRoomName !== roomName) return;
+    if (userId === currentUser.id || !isInCall) return;
 
-    if (userId !== currentUser.id && isInCall) {
-      await createPeerConnection(userId, true);
-    }
+    await createPeerConnection(userId, false);
   };
 
   // Called when a user leaves the call
   const handleUserLeftCall = ({ userId, roomName: eventRoomName }) => {
-    if (eventRoomName !== roomName) return;
+    if (eventRoomName && eventRoomName !== roomName) return;
 
     const connectionKey = `${roomName}:${userId}`;
     const pc = peerConnectionsRef.current.get(connectionKey);
@@ -323,7 +324,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   // Handle incoming WebRTC offer
   const handleWebRTCOffer = async ({ from, offer, roomName: eventRoomName }) => {
-    if (eventRoomName !== roomName) return;
+    if (eventRoomName && eventRoomName !== roomName) return;
     if (!isInCall) return;
 
     const peerConnection = await createPeerConnection(from, false);
@@ -341,7 +342,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   // Handle incoming WebRTC answer
   const handleWebRTCAnswer = async ({ from, answer, roomName: eventRoomName }) => {
-    if (eventRoomName !== roomName) return;
+    if (eventRoomName && eventRoomName !== roomName) return;
 
     const peerConnection = peerConnectionsRef.current.get(`${roomName}:${from}`);
     if (peerConnection) {
@@ -351,7 +352,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   // Handle incoming ICE candidate
   const handleWebRTCIceCandidate = async ({ from, candidate, roomName: eventRoomName }) => {
-    if (eventRoomName !== roomName) return;
+    if (eventRoomName && eventRoomName !== roomName) return;
 
     const peerConnection = peerConnectionsRef.current.get(`${roomName}:${from}`);
     if (peerConnection) {
@@ -371,7 +372,12 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const callParticipantsCount = Object.keys(remoteStreams).length + (isInCall ? 1 : 0);
 
   const renderMessageBody = (msg) => {
-    if (msg.messageType === 'image' || msg.messageType === 'gif') {
+    const messageText = typeof msg.message === 'string' ? msg.message : '';
+    const isImageDataUrl = messageText.startsWith('data:image/');
+    const isGifUrl = /\.gif($|\?)/i.test(messageText);
+    const mediaType = msg.messageType || (isImageDataUrl ? 'image' : (isGifUrl ? 'gif' : 'text'));
+
+    if (mediaType === 'image' || mediaType === 'gif') {
       return (
         <img
           src={msg.message}

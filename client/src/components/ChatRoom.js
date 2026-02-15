@@ -37,7 +37,9 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
   useEffect(() => {
     // Connect to Socket.IO server
-    const serverUrl = process.env.REACT_APP_API_URL || 'https://ephemeral-chat-server.onrender.com';
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const configuredUrl = process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL.replace(/\/$/, '') : '';
+    const serverUrl = configuredUrl || (isLocalhost ? 'http://localhost:5000' : window.location.origin);
     const newSocket = io(serverUrl, {
       auth: { token }
     });

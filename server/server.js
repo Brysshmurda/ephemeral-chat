@@ -10,6 +10,7 @@ const socketHandler = require('./sockets/socketHandler');
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
+  maxHttpBufferSize: 5e6,
   cors: {
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
     methods: ['GET', 'POST']
