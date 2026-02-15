@@ -7,11 +7,24 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const [callMode, setCallMode] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({});
   const [gifUrlInput, setGifUrlInput] = useState('');
+  const [notice, setNotice] = useState('');
+  const [noticeType, setNoticeType] = useState('info');
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const noticeTimeoutRef = useRef(null);
   const peerConnectionsRef = useRef(new Map()); // Map of roomName:userId -> RTCPeerConnection
   const localStreamRef = useRef(null);
   const localVideoRef = useRef(null);
+
+  const showNotice = (message, type = 'info') => {
+    setNotice(message);
+    setNoticeType(type);
+
+    clearTimeout(noticeTimeoutRef.current);
+    noticeTimeoutRef.current = setTimeout(() => {
+      setNotice('');
+    }, 3200);
+  };
 
   useEffect(() => {
     // Listen for typing indicators
@@ -40,6 +53,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     socket.on('webrtc_ice_candidate', handleWebRTCIceCandidate);
 
     return () => {
+      clearTimeout(noticeTimeoutRef.current);
       socket.off('user_typing');
       socket.off('user_stopped_typing');
       socket.off('call_participants');
@@ -112,11 +126,17 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     const trimmedGifUrl = gifUrlInput.trim();
     if (!trimmedGifUrl) return;
 
+    if (!/^https?:\/\//i.test(trimmedGifUrl)) {
+      showNotice('Please paste a valid GIF URL starting with http/https.', 'error');
+      return;
+    }
+
     sendMediaMessage({
       message: trimmedGifUrl,
       messageType: 'gif'
     });
     setGifUrlInput('');
+    showNotice('GIF sent.', 'success');
   };
 
   const handleImageUpload = (event) => {
@@ -124,13 +144,13 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Please choose an image file.');
+      showNotice('Please choose an image file.', 'error');
       event.target.value = '';
       return;
     }
 
     if (file.size > 2 * 1024 * 1024) {
-      alert('Image must be 2MB or less.');
+      showNotice('Image must be 2MB or less.', 'error');
       event.target.value = '';
       return;
     }
@@ -141,6 +161,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         message: reader.result,
         messageType: 'image'
       });
+      showNotice('Image sent.', 'success');
     };
     reader.readAsDataURL(file);
     event.target.value = '';
@@ -182,8 +203,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       // Notify server that we're joining the call
       socket.emit('join_call', { roomName });
     } catch (error) {
-      console.error('Error accessing media devices:', error);
-      alert('Could not access microphone/camera. Please check permissions.');
+      showNotice('Could not access microphone/camera. Please check browser permissions.', 'error');
     }
   };
 
@@ -359,7 +379,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       try {
         await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (error) {
-        console.error('Error adding ICE candidate:', error);
+        showNotice('Connection quality issue detected. Retrying media path...', 'error');
       }
     }
   };
@@ -398,6 +418,12 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
           : '⚠️ Room messages stay while this tab is open and disappear when it closes'
         }
       </div>
+
+      {notice && (
+        <div className={`chat-notice ${noticeType}`}>
+          {notice}
+        </div>
+      )}
 
       <div className="chat-header">
         <div>

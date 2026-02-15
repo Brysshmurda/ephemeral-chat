@@ -15,6 +15,7 @@ const loadSessionObject = (key) => {
 };
 
 const ChatRoom = ({ user, token, onLogout }) => {
+  const isDev = process.env.NODE_ENV === 'development';
   const [socket, setSocket] = useState(null);
   const [currentRoom, setCurrentRoom] = useState(null);
   const [joinedRooms, setJoinedRooms] = useState([]);
@@ -45,11 +46,15 @@ const ChatRoom = ({ user, token, onLogout }) => {
     });
 
     newSocket.on('connect', () => {
-      console.log('Connected to server');
+      if (isDev) {
+        console.log('Connected to server');
+      }
     });
 
     newSocket.on('connect_error', (error) => {
-      console.error('Connection error:', error);
+      if (isDev) {
+        console.error('Connection error:', error);
+      }
     });
 
     // Room joined successfully
@@ -66,7 +71,9 @@ const ChatRoom = ({ user, token, onLogout }) => {
       setShowRoomInput(false);
       setNewRoomName('');
       setRoomError('');
-      console.log(`Joined room: ${roomName}`);
+      if (isDev) {
+        console.log(`Joined room: ${roomName}`);
+      }
     });
 
     // New message received
@@ -83,13 +90,17 @@ const ChatRoom = ({ user, token, onLogout }) => {
     // User joined the room
     newSocket.on('user_joined_room', ({ username, users, roomName }) => {
       setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
-      console.log(`${username} joined the room`);
+      if (isDev) {
+        console.log(`${username} joined the room`);
+      }
     });
 
     // User left the room
     newSocket.on('user_left_room', ({ username, users, roomName }) => {
       setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
-      console.log(`${username} left the room`);
+      if (isDev) {
+        console.log(`${username} left the room`);
+      }
     });
 
     // Online users list
@@ -127,7 +138,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
       newSocket.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, isDev]);
 
   const handleJoinRoom = (roomName) => {
     const trimmedRoomName = roomName.trim();

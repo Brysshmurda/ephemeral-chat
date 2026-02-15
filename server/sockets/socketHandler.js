@@ -1,5 +1,18 @@
 const jwt = require('jsonwebtoken');
 
+const shouldDebugLog = process.env.SOCKET_DEBUG_LOGS === 'true';
+
+const maskId = (value) => {
+  const stringValue = String(value || 'unknown');
+  if (stringValue.length <= 8) return stringValue;
+  return `${stringValue.slice(0, 4)}...${stringValue.slice(-4)}`;
+};
+
+const debugLog = (event, details = {}) => {
+  if (!shouldDebugLog) return;
+  console.log(`[socket] ${event}`, details);
+};
+
 // In-memory storage for active users
 // Structure: { userId: { socketId, username, joinedRooms: Set[roomName] } }
 const activeUsers = new Map();
@@ -26,7 +39,7 @@ module.exports = (io) => {
   });
 
   io.on('connection', (socket) => {
-    console.log(`✅ User connected: ${socket.username} (${socket.userId})`);
+    debugLog('user_connected', { userId: maskId(socket.userId) });
 
     // Add user to active users
     activeUsers.set(socket.userId, {
@@ -58,7 +71,7 @@ module.exports = (io) => {
           users: new Set(),
           activeCall: new Set()
         });
-        console.log(`🏠 Room created: ${roomName}`);
+        debugLog('room_created', { roomLength: roomName.length });
       }
 
       const room = rooms.get(roomName);
@@ -83,7 +96,7 @@ module.exports = (io) => {
         users: getRoomUsers(roomName)
       });
 
-      console.log(`✅ ${socket.username} joined room: ${roomName}`);
+      debugLog('room_joined', { userId: maskId(socket.userId), roomLength: roomName.length });
     });
 
     // Leave room
@@ -117,7 +130,7 @@ module.exports = (io) => {
         message: messageData
       });
 
-      console.log(`💬 Message in ${roomName}: ${socket.username}: ${messageType}`);
+      debugLog('room_message', { userId: maskId(socket.userId), messageType });
     });
 
     // Send direct message to specific user
@@ -143,7 +156,11 @@ module.exports = (io) => {
       // Send back to sender as confirmation
       socket.emit('direct_message_sent', messageData);
 
-      console.log(`💬 DM from ${sender.username} to ${targetUser.username}: ${message}`);
+      debugLog('direct_message', {
+        senderId: maskId(socket.userId),
+        targetId: maskId(targetUserId),
+        messageType
+      });
     });
 
     // Typing indicator for room
@@ -199,7 +216,7 @@ module.exports = (io) => {
         roomName
       });
 
-      console.log(`📞 ${socket.username} joined call in ${roomName}`);
+      debugLog('call_joined', { userId: maskId(socket.userId), roomLength: roomName.length });
     });
 
     // Group call - Leave call
@@ -218,7 +235,7 @@ module.exports = (io) => {
         roomName
       });
 
-      console.log(`📞 ${socket.username} left call in ${roomName}`);
+      debugLog('call_left', { userId: maskId(socket.userId), roomLength: roomName.length });
     });
 
     // WebRTC signaling for group calls
@@ -266,7 +283,7 @@ module.exports = (io) => {
 
     // Disconnect
     socket.on('disconnect', () => {
-      console.log(`❌ User disconnected: ${socket.username}`);
+      debugLog('user_disconnected', { userId: maskId(socket.userId) });
 
       const user = activeUsers.get(socket.userId);
       if (user) {
@@ -313,9 +330,9 @@ module.exports = (io) => {
     // If room is empty, delete it
     if (room.users.size === 0) {
       rooms.delete(roomName);
-      console.log(`🗑️  Room deleted (empty): ${roomName}`);
+      debugLog('room_deleted', { roomLength: roomName.length });
     } else {
-      console.log(`👋 ${socket.username} left room: ${roomName}`);
+      debugLog('room_left', { userId: maskId(socket.userId), roomLength: roomName.length });
     }
   }
 

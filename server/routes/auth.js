@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 
 const router = express.Router();
+const shouldDebugLog = process.env.AUTH_DEBUG_LOGS === 'true';
 
 // In-memory user storage (ephemeral - lost on server restart)
 const ephemeralUsers = new Map(); // username -> userId
@@ -36,7 +37,9 @@ router.post('/register', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    console.log(`✅ User joined (ephemeral): ${username}`);
+    if (shouldDebugLog) {
+      console.log('User registered (ephemeral session)');
+    }
 
     res.status(201).json({
       message: 'Joined successfully',
@@ -47,7 +50,10 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Register error:', error);
+    console.error('Register error');
+    if (shouldDebugLog) {
+      console.error(error);
+    }
     res.status(500).json({ error: 'Server error' });
   }
 });
