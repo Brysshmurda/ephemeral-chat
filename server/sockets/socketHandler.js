@@ -18,7 +18,7 @@ const debugLog = (event, details = {}) => {
 // Structure: { userId: { socketId, username, joinedRooms: Set[roomName] } }
 const activeUsers = new Map();
 
-// Structure: { roomName: { users: Set[userId], activeCall: Set[userId] } }
+// Structure: { roomName: { ownerId, users: Set[userId], activeCall: Set[userId], mutedUsers: Set[userId] } }
 const rooms = new Map();
 
 module.exports = (io) => {
@@ -69,8 +69,10 @@ module.exports = (io) => {
       // Create room if doesn't exist
       if (!rooms.has(roomName)) {
         rooms.set(roomName, {
+          ownerId: socket.userId,
           users: new Set(),
-          activeCall: new Set()
+          activeCall: new Set(),
+          mutedUsers: new Set()
         });
         debugLog('room_created', { roomLength: roomName.length });
       }
@@ -86,7 +88,9 @@ module.exports = (io) => {
       socket.emit('room_joined', {
         roomName,
         messages: [],
-        users: getRoomUsers(roomName)
+        users: getRoomUsers(roomName),
+        ownerId: room.ownerId,
+        mutedUserIds: Array.from(room.mutedUsers)
       });
 
       // Notify others in the room
@@ -94,7 +98,9 @@ module.exports = (io) => {
         userId: socket.userId,
         username: socket.username,
         roomName,
-        users: getRoomUsers(roomName)
+        users: getRoomUsers(roomName),
+        ownerId: room.ownerId,
+        mutedUserIds: Array.from(room.mutedUsers)
       });
 
       debugLog('room_joined', { userId: maskId(socket.userId), roomLength: roomName.length });
@@ -108,6 +114,39 @@ module.exports = (io) => {
       }
     });
 
+    socket.on('mute_user_in_room', ({ roomName, targetUserId, shouldMute }) => {
+      const room = rooms.get(roomName);
+      const requester = activeUsers.get(socket.userId);
+      if (!room || !requester || !requester.joinedRooms.has(roomName)) return;
+      if (room.ownerId !== socket.userId) return;
+      if (!room.users.has(targetUserId) || targetUserId === socket.userId) return;
+
+      if (shouldMute) {
+        room.mutedUsers.add(targetUserId);
+      } else {
+        room.mutedUsers.delete(targetUserId);
+      }
+
+      io.to(roomName).emit('room_moderation_updated', {
+        roomName,
+        ownerId: room.ownerId,
+        mutedUserIds: Array.from(room.mutedUsers)
+      });
+    });
+
+    socket.on('remove_user_from_room', ({ roomName, targetUserId }) => {
+      const room = rooms.get(roomName);
+      const requester = activeUsers.get(socket.userId);
+      const targetUser = activeUsers.get(targetUserId);
+      if (!room || !requester || !targetUser) return;
+      if (room.ownerId !== socket.userId) return;
+      if (!requester.joinedRooms.has(roomName) || !targetUser.joinedRooms.has(roomName)) return;
+      if (targetUserId === socket.userId) return;
+
+      io.to(targetUser.socketId).emit('user_removed_from_room', { roomName });
+      leaveRoomByUserId(targetUserId, roomName);
+    });
+
     // Send message to room
     socket.on('send_message', ({ roomName, message, messageType = 'text' }) => {
       const user = activeUsers.get(socket.userId);
@@ -115,6 +154,11 @@ module.exports = (io) => {
 
       const room = rooms.get(roomName);
       if (!room) return;
+
+      if (room.mutedUsers.has(socket.userId)) {
+        socket.emit('user_muted_in_room', { roomName });
+        return;
+      }
 
       const messageData = {
         id: Date.now() + Math.random(),
@@ -310,6 +354,7 @@ module.exports = (io) => {
       });
     }
 
+    room.mutedUsers.delete(socket.userId);
     room.users.delete(socket.userId);
     user.joinedRooms.delete(roomName);
     socket.leave(roomName);
@@ -319,7 +364,9 @@ module.exports = (io) => {
       userId: socket.userId,
       username: socket.username,
       roomName,
-      users: getRoomUsers(roomName)
+      users: getRoomUsers(roomName),
+      ownerId: room.ownerId,
+      mutedUserIds: Array.from(room.mutedUsers)
     });
 
     // If room is empty, delete it
@@ -327,8 +374,59 @@ module.exports = (io) => {
       rooms.delete(roomName);
       debugLog('room_deleted', { roomLength: roomName.length });
     } else {
+      if (room.ownerId === socket.userId) {
+        room.ownerId = Array.from(room.users)[0] || null;
+        io.to(roomName).emit('room_moderation_updated', {
+          roomName,
+          ownerId: room.ownerId,
+          mutedUserIds: Array.from(room.mutedUsers)
+        });
+      }
       debugLog('room_left', { userId: maskId(socket.userId), roomLength: roomName.length });
     }
+  }
+
+  function leaveRoomByUserId(userId, roomName) {
+    const room = rooms.get(roomName);
+    const targetUser = activeUsers.get(userId);
+    if (!room || !targetUser) return;
+
+    if (room.activeCall.has(userId)) {
+      room.activeCall.delete(userId);
+      io.to(roomName).emit('user_left_call', {
+        userId,
+        roomName
+      });
+    }
+
+    room.mutedUsers.delete(userId);
+    room.users.delete(userId);
+    targetUser.joinedRooms.delete(roomName);
+    io.sockets.sockets.get(targetUser.socketId)?.leave(roomName);
+
+    io.to(roomName).emit('user_left_room', {
+      userId,
+      username: targetUser.username,
+      roomName,
+      users: getRoomUsers(roomName),
+      ownerId: room.ownerId,
+      mutedUserIds: Array.from(room.mutedUsers)
+    });
+
+    if (room.users.size === 0) {
+      rooms.delete(roomName);
+      return;
+    }
+
+    if (room.ownerId === userId) {
+      room.ownerId = Array.from(room.users)[0] || null;
+    }
+
+    io.to(roomName).emit('room_moderation_updated', {
+      roomName,
+      ownerId: room.ownerId,
+      mutedUserIds: Array.from(room.mutedUsers)
+    });
   }
 
   // Get list of users in a room

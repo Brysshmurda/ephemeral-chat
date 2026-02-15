@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roomUsers, isDM = false, targetUserId, targetUsername, onCloseDM }) => {
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roomUsers, roomMeta, isDM = false, targetUserId, targetUsername, onCloseDM }) => {
   const [messageInput, setMessageInput] = useState('');
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [isInCall, setIsInCall] = useState(false);
@@ -11,6 +13,11 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const [remoteStreams, setRemoteStreams] = useState({});
   const [remoteMediaControls, setRemoteMediaControls] = useState({});
   const [focusedMediaUserId, setFocusedMediaUserId] = useState(null);
+  const [showPreflight, setShowPreflight] = useState(false);
+  const [preflightChecks, setPreflightChecks] = useState({ mic: 'untested', camera: 'untested', screen: 'untested' });
+  const [pushToTalkEnabled, setPushToTalkEnabled] = useState(false);
+  const [isPTTPressed, setIsPTTPressed] = useState(false);
+  const [peerQuality, setPeerQuality] = useState({});
   const [gifUrlInput, setGifUrlInput] = useState('');
   const [notice, setNotice] = useState('');
   const [noticeType, setNoticeType] = useState('info');
@@ -134,6 +141,100 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     focusedVideoRef.current.volume = isDeafened ? 0 : controls.volume;
     focusedVideoRef.current.play().catch(() => {});
   }, [focusedMediaUserId, remoteStreams, remoteMediaControls, isDeafened]);
+
+  useEffect(() => {
+    const audioTrack = audioTrackRef.current;
+    if (!audioTrack) return;
+
+    const shouldTransmit = !isMuted && (!pushToTalkEnabled || isPTTPressed);
+    audioTrack.enabled = shouldTransmit;
+  }, [isMuted, pushToTalkEnabled, isPTTPressed]);
+
+  useEffect(() => {
+    if (!isInCall || !pushToTalkEnabled) return;
+
+    const handleKeyDown = (event) => {
+      const targetTag = event.target?.tagName;
+      const isTypingTarget = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || event.target?.isContentEditable;
+      if (isTypingTarget) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        setIsPTTPressed(true);
+      }
+
+      if (event.key.toLowerCase() === 'm') {
+        setIsMuted((prev) => !prev);
+      }
+
+      if (event.key.toLowerCase() === 'd') {
+        setIsDeafened((prev) => !prev);
+      }
+    };
+
+    const handleKeyUp = (event) => {
+      if (event.code === 'Space') {
+        setIsPTTPressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [isInCall, pushToTalkEnabled]);
+
+  useEffect(() => {
+    if (!isInCall) {
+      setPeerQuality({});
+      return;
+    }
+
+    const qualityInterval = setInterval(async () => {
+      const roomConnections = Array.from(peerConnectionsRef.current.entries())
+        .filter(([key]) => key.startsWith(`${roomName}:`));
+
+      for (const [key, peerConnection] of roomConnections) {
+        const userId = key.replace(`${roomName}:`, '');
+        try {
+          const stats = await peerConnection.getStats();
+          let rtt = null;
+          let packetLossRatio = 0;
+
+          stats.forEach((report) => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded' && typeof report.currentRoundTripTime === 'number') {
+              rtt = report.currentRoundTripTime * 1000;
+            }
+
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              const lost = report.packetsLost || 0;
+              const received = report.packetsReceived || 0;
+              const total = lost + received;
+              if (total > 0) {
+                packetLossRatio = lost / total;
+              }
+            }
+          });
+
+          let quality = 'Good';
+          if ((rtt && rtt > 250) || packetLossRatio > 0.08) {
+            quality = 'Poor';
+          } else if ((rtt && rtt > 130) || packetLossRatio > 0.03) {
+            quality = 'Fair';
+          }
+
+          setPeerQuality((prev) => ({ ...prev, [userId]: quality }));
+        } catch (error) {
+          setPeerQuality((prev) => ({ ...prev, [userId]: 'Unknown' }));
+        }
+      }
+    }, 4000);
+
+    return () => clearInterval(qualityInterval);
+  }, [isInCall, roomName]);
 
   const getRoomPeerConnections = () => {
     return Array.from(peerConnectionsRef.current.entries())
@@ -344,12 +445,15 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     setRemoteStreams({});
     setRemoteMediaControls({});
     setFocusedMediaUserId(null);
+    setPeerQuality({});
 
     setIsInCall(false);
     setIsMuted(false);
     setIsDeafened(false);
     setIsCameraOn(false);
     setIsScreenSharing(false);
+    setPushToTalkEnabled(false);
+    setIsPTTPressed(false);
 
     // Notify server
     if (notifyServer && !isDM) {
@@ -409,6 +513,32 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     const nextMuted = !isMuted;
     audioTrack.enabled = !nextMuted;
     setIsMuted(nextMuted);
+  };
+
+  const testPreflight = async (type) => {
+    try {
+      if (type === 'mic') {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      if (type === 'camera') {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      if (type === 'screen') {
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          throw new Error('Not supported');
+        }
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      setPreflightChecks((prev) => ({ ...prev, [type]: 'ok' }));
+    } catch (error) {
+      setPreflightChecks((prev) => ({ ...prev, [type]: 'blocked' }));
+    }
   };
 
   const toggleDeafen = () => {
@@ -693,6 +823,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     return roomUser?.username || `User ${String(userId).slice(0, 6)}`;
   };
 
+  const amIMutedInRoom = !isDM && Array.isArray(roomMeta?.mutedUserIds) && roomMeta.mutedUserIds.includes(currentUser.id);
+
   const renderMessageBody = (msg) => {
     const messageText = typeof msg.message === 'string' ? msg.message : '';
     const isImageDataUrl = messageText.startsWith('data:image/');
@@ -709,7 +841,20 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       );
     }
 
-    return <div className="message-text">{msg.message}</div>;
+    const text = String(msg.message || '');
+    const mentionRegex = new RegExp(`(@${escapeRegex(String(currentUser.username))})`, 'ig');
+    const mentionMatcher = new RegExp(`^@${escapeRegex(String(currentUser.username))}$`, 'i');
+    const parts = text.split(mentionRegex);
+
+    return (
+      <div className="message-text">
+        {parts.map((part, index) => (
+          mentionMatcher.test(part)
+            ? <span key={`${part}-${index}`} className="mention-highlight">{part}</span>
+            : <span key={`${part}-${index}`}>{part}</span>
+        ))}
+      </div>
+    );
   };
 
   return (
@@ -749,6 +894,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
               <small style={{ color: '#4caf50' }}>
                 {roomUsers.length} user{roomUsers.length !== 1 ? 's' : ''} in room
                 {isInCall && ` • ${callParticipantsCount} in call`}
+                {amIMutedInRoom && ' • You are muted by owner'}
               </small>
             </>
           )}
@@ -757,6 +903,12 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
           <div className="call-controls">
             {isInCall ? (
               <>
+                <button
+                  className={`call-action-btn ${pushToTalkEnabled ? 'active' : ''}`}
+                  onClick={() => setPushToTalkEnabled((prev) => !prev)}
+                >
+                  {pushToTalkEnabled ? 'PTT On' : 'PTT Off'}
+                </button>
                 <button
                   className={`call-action-btn ${isMuted ? 'active' : ''}`}
                   onClick={toggleMute}
@@ -791,7 +943,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
             ) : (
               <button
                 className="voice-call-btn"
-                onClick={joinCall}
+                onClick={() => setShowPreflight(true)}
               >
                 📞 Join Call
               </button>
@@ -878,8 +1030,55 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
                 </div>
               )}
               <span className="video-label">{getUserDisplayName(userId)}</span>
+              {peerQuality[userId] && (
+                <span className="video-quality-badge">{peerQuality[userId]}</span>
+              )}
             </div>
           );})}
+        </div>
+      )}
+
+      {isInCall && pushToTalkEnabled && (
+        <div className="ptt-container">
+          <button
+            type="button"
+            className={`ptt-button ${isPTTPressed ? 'active' : ''}`}
+            onMouseDown={() => setIsPTTPressed(true)}
+            onMouseUp={() => setIsPTTPressed(false)}
+            onMouseLeave={() => setIsPTTPressed(false)}
+            onTouchStart={() => setIsPTTPressed(true)}
+            onTouchEnd={() => setIsPTTPressed(false)}
+          >
+            Hold to Talk (Space)
+          </button>
+        </div>
+      )}
+
+      {showPreflight && (
+        <div className="focused-media-overlay" onClick={() => setShowPreflight(false)}>
+          <div className="focused-media-content" onClick={(event) => event.stopPropagation()}>
+            <div className="focused-media-header">
+              <strong>Call Setup Check</strong>
+              <button type="button" className="call-action-btn" onClick={() => setShowPreflight(false)}>Close</button>
+            </div>
+            <div style={{ padding: '16px' }}>
+              <p style={{ marginBottom: '10px' }}>Test your permissions before joining:</p>
+              <div className="call-controls" style={{ marginBottom: '12px' }}>
+                <button className="call-action-btn" onClick={() => testPreflight('mic')}>Test Mic ({preflightChecks.mic})</button>
+                <button className="call-action-btn" onClick={() => testPreflight('camera')}>Test Camera ({preflightChecks.camera})</button>
+                <button className="call-action-btn" onClick={() => testPreflight('screen')}>Test Screen ({preflightChecks.screen})</button>
+              </div>
+              <button
+                className="voice-call-btn"
+                onClick={async () => {
+                  await joinCall();
+                  setShowPreflight(false);
+                }}
+              >
+                Start Voice Call
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

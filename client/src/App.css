@@ -816,6 +816,9 @@
   cursor: pointer;
   font-weight: 600;
   color: #333;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .joined-room-name:hover {
@@ -864,6 +867,77 @@
   color: #8B0000;
 }
 
+.call-action-btn:focus-visible,
+.voice-call-btn:focus-visible,
+.joined-room-name:focus-visible,
+.joined-room-leave:focus-visible,
+.message-input:focus-visible,
+.gif-input:focus-visible,
+.mod-btn:focus-visible,
+.ptt-button:focus-visible {
+  outline: 2px solid #8B0000;
+  outline-offset: 2px;
+}
+
+.room-unread-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #8B0000;
+  color: #fff;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.room-mention-badge {
+  min-width: 26px;
+  height: 20px;
+  border-radius: 999px;
+  background: #4a7dff;
+  color: #fff;
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.connection-banner {
+  margin: 8px 12px 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff8e5;
+  color: #8a6500;
+  border: 1px solid #f3ddb0;
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+
+.mod-controls {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.mod-btn {
+  border: 1px solid #d2d8e1;
+  background: #fff;
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mod-btn.danger {
+  border-color: #f2c2c2;
+  color: #9f2020;
+}
+
 .voice-call-btn.video {
   background: linear-gradient(135deg, #1976d2 0%, #1259a1 100%);
 }
@@ -902,6 +976,17 @@
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 0.75rem;
+}
+
+.video-quality-badge {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
 }
 
 .media-toolbar {
@@ -979,6 +1064,35 @@
   border-radius: 10px;
   margin-top: 4px;
   display: block;
+}
+
+.mention-highlight {
+  background: #fff0a8;
+  color: #6a4b00;
+  border-radius: 6px;
+  padding: 0 4px;
+  font-weight: 700;
+}
+
+.ptt-container {
+  padding: 10px 20px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.ptt-button {
+  border: 1px solid #d2d8e1;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ptt-button.active {
+  background: #8B0000;
+  color: #fff;
+  border-color: #8B0000;
 }
 
 .remote-media-controls {

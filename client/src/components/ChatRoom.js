@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import ChatWindow from './ChatWindow';
 
@@ -19,14 +19,30 @@ const ChatRoom = ({ user, token, onLogout }) => {
   const [socket, setSocket] = useState(null);
   const [currentRoom, setCurrentRoom] = useState(null);
   const [joinedRooms, setJoinedRooms] = useState([]);
+  const [roomMetaByRoom, setRoomMetaByRoom] = useState({}); // roomName -> { ownerId, mutedUserIds[] }
   const [roomUsersByRoom, setRoomUsersByRoom] = useState({});
   const [roomMessagesByRoom, setRoomMessagesByRoom] = useState(() => loadSessionObject(ROOM_MESSAGES_STORAGE_KEY));
   const [showRoomInput, setShowRoomInput] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [roomError, setRoomError] = useState('');
+  const [appNotice, setAppNotice] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [directMessages, setDirectMessages] = useState(() => loadSessionObject(DM_MESSAGES_STORAGE_KEY)); // userId -> messages[]
   const [activeDM, setActiveDM] = useState(null); // userId of active DM conversation
+  const [unreadRooms, setUnreadRooms] = useState({});
+  const [mentionRooms, setMentionRooms] = useState({});
+  const [unreadDMs, setUnreadDMs] = useState({});
+  const currentRoomRef = useRef(null);
+  const activeDMRef = useRef(null);
+
+  useEffect(() => {
+    currentRoomRef.current = currentRoom;
+  }, [currentRoom]);
+
+  useEffect(() => {
+    activeDMRef.current = activeDM;
+  }, [activeDM]);
 
   useEffect(() => {
     sessionStorage.setItem(ROOM_MESSAGES_STORAGE_KEY, JSON.stringify(roomMessagesByRoom));
@@ -46,22 +62,35 @@ const ChatRoom = ({ user, token, onLogout }) => {
     });
 
     newSocket.on('connect', () => {
+      setConnectionStatus('connected');
       if (isDev) {
         console.log('Connected to server');
       }
     });
 
+    newSocket.on('disconnect', () => {
+      setConnectionStatus('reconnecting');
+    });
+
     newSocket.on('connect_error', (error) => {
+      setConnectionStatus('waking');
       if (isDev) {
         console.error('Connection error:', error);
       }
     });
 
+    newSocket.io.on('reconnect_attempt', () => {
+      setConnectionStatus('reconnecting');
+    });
+
     // Room joined successfully
-    newSocket.on('room_joined', ({ roomName, messages, users }) => {
+    newSocket.on('room_joined', ({ roomName, messages, users, ownerId, mutedUserIds = [] }) => {
       setJoinedRooms((prev) => (prev.includes(roomName) ? prev : [...prev, roomName]));
       setCurrentRoom(roomName);
       setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
+      setRoomMetaByRoom((prev) => ({ ...prev, [roomName]: { ownerId, mutedUserIds } }));
+      setUnreadRooms((prev) => ({ ...prev, [roomName]: 0 }));
+      setMentionRooms((prev) => ({ ...prev, [roomName]: 0 }));
       setRoomMessagesByRoom((prev) => {
         if (prev[roomName]) {
           return prev;
@@ -85,22 +114,69 @@ const ChatRoom = ({ user, token, onLogout }) => {
           [roomName]: [...roomMessages, message]
         };
       });
+
+      if (currentRoomRef.current !== roomName) {
+        setUnreadRooms((prev) => ({
+          ...prev,
+          [roomName]: (prev[roomName] || 0) + 1
+        }));
+
+        if (
+          typeof message?.message === 'string' &&
+          message.senderId !== user.id &&
+          message.message.toLowerCase().includes(`@${String(user.username).toLowerCase()}`)
+        ) {
+          setMentionRooms((prev) => ({
+            ...prev,
+            [roomName]: (prev[roomName] || 0) + 1
+          }));
+        }
+      }
     });
 
     // User joined the room
-    newSocket.on('user_joined_room', ({ username, users, roomName }) => {
+    newSocket.on('user_joined_room', ({ username, users, roomName, ownerId, mutedUserIds = [] }) => {
       setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
+      setRoomMetaByRoom((prev) => ({ ...prev, [roomName]: { ownerId, mutedUserIds } }));
       if (isDev) {
         console.log(`${username} joined the room`);
       }
     });
 
     // User left the room
-    newSocket.on('user_left_room', ({ username, users, roomName }) => {
+    newSocket.on('user_left_room', ({ username, users, roomName, ownerId, mutedUserIds = [] }) => {
       setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
+      setRoomMetaByRoom((prev) => ({ ...prev, [roomName]: { ownerId, mutedUserIds } }));
       if (isDev) {
         console.log(`${username} left the room`);
       }
+    });
+
+    newSocket.on('room_moderation_updated', ({ roomName, ownerId, mutedUserIds = [] }) => {
+      setRoomMetaByRoom((prev) => ({ ...prev, [roomName]: { ownerId, mutedUserIds } }));
+    });
+
+    newSocket.on('user_removed_from_room', ({ roomName }) => {
+      setJoinedRooms((prev) => prev.filter((room) => room !== roomName));
+      setRoomUsersByRoom((prev) => {
+        const next = { ...prev };
+        delete next[roomName];
+        return next;
+      });
+      setRoomMetaByRoom((prev) => {
+        const next = { ...prev };
+        delete next[roomName];
+        return next;
+      });
+      setAppNotice(`You were removed from room: ${roomName}`);
+
+      if (currentRoomRef.current === roomName) {
+        setCurrentRoom(null);
+      }
+    });
+
+    newSocket.on('user_muted_in_room', ({ roomName }) => {
+      setAppNotice(`You are muted in ${roomName} by the room owner.`);
     });
 
     // Online users list
@@ -118,6 +194,13 @@ const ChatRoom = ({ user, token, onLogout }) => {
           [userId]: [...existingMessages, messageData]
         };
       });
+
+      if (activeDMRef.current !== messageData.senderId) {
+        setUnreadDMs((prev) => ({
+          ...prev,
+          [messageData.senderId]: (prev[messageData.senderId] || 0) + 1
+        }));
+      }
     });
 
     // Direct message sent (confirmation)
@@ -178,6 +261,8 @@ const ChatRoom = ({ user, token, onLogout }) => {
       const currentIndex = joinedRooms.indexOf(currentRoom);
       const nextRoom = joinedRooms[(currentIndex + 1) % joinedRooms.length];
       setCurrentRoom(nextRoom);
+      setUnreadRooms((prev) => ({ ...prev, [nextRoom]: 0 }));
+      setMentionRooms((prev) => ({ ...prev, [nextRoom]: 0 }));
     }
   };
 
@@ -199,9 +284,16 @@ const ChatRoom = ({ user, token, onLogout }) => {
     }
   };
 
+  const handleSelectRoom = (roomName) => {
+    setCurrentRoom(roomName);
+    setUnreadRooms((prev) => ({ ...prev, [roomName]: 0 }));
+    setMentionRooms((prev) => ({ ...prev, [roomName]: 0 }));
+  };
+
   const handleStartDM = (targetUser) => {
     // Set active DM conversation
     setActiveDM(targetUser.userId);
+    setUnreadDMs((prev) => ({ ...prev, [targetUser.userId]: 0 }));
     
     // Initialize DM conversation if it doesn't exist
     if (!directMessages[targetUser.userId]) {
@@ -214,8 +306,27 @@ const ChatRoom = ({ user, token, onLogout }) => {
     }
   };
 
+  const handleModerateMute = (targetUserId, shouldMute) => {
+    if (!socket || !currentRoom) return;
+    socket.emit('mute_user_in_room', {
+      roomName: currentRoom,
+      targetUserId,
+      shouldMute
+    });
+  };
+
+  const handleModerateRemove = (targetUserId) => {
+    if (!socket || !currentRoom) return;
+    socket.emit('remove_user_from_room', {
+      roomName: currentRoom,
+      targetUserId
+    });
+  };
+
   const currentRoomUsers = currentRoom ? (roomUsersByRoom[currentRoom] || []) : [];
   const currentRoomMessages = currentRoom ? (roomMessagesByRoom[currentRoom] || []) : [];
+  const currentRoomMeta = currentRoom ? roomMetaByRoom[currentRoom] || { ownerId: null, mutedUserIds: [] } : { ownerId: null, mutedUserIds: [] };
+  const isCurrentUserOwner = currentRoomMeta.ownerId === user.id;
 
   return (
     <div className="chat-container">
@@ -229,6 +340,18 @@ const ChatRoom = ({ user, token, onLogout }) => {
             Logout
           </button>
         </div>
+
+        {connectionStatus !== 'connected' && (
+          <div className="connection-banner">
+            {connectionStatus === 'waking' ? 'Server waking up... reconnecting' : 'Reconnecting...'}
+          </div>
+        )}
+
+        {appNotice && (
+          <div className="chat-notice info" style={{ margin: '8px 12px 0' }}>
+            {appNotice}
+          </div>
+        )}
 
         {/* Room Selector */}
         <div className="room-selector">
@@ -282,10 +405,16 @@ const ChatRoom = ({ user, token, onLogout }) => {
                   <div key={room} className={`joined-room-item ${currentRoom === room ? 'active' : ''}`}>
                     <button
                       className="joined-room-name"
-                      onClick={() => setCurrentRoom(room)}
+                      onClick={() => handleSelectRoom(room)}
                       title={`Open ${room}`}
                     >
                       {room}
+                      {(unreadRooms[room] || 0) > 0 && (
+                        <span className="room-unread-badge">{unreadRooms[room]}</span>
+                      )}
+                      {(mentionRooms[room] || 0) > 0 && (
+                        <span className="room-mention-badge">@{mentionRooms[room]}</span>
+                      )}
                     </button>
                     <button
                       className="joined-room-leave"
@@ -318,13 +447,29 @@ const ChatRoom = ({ user, token, onLogout }) => {
         {/* Room Users */}
         {currentRoom && (
           <div className="room-users">
-            <h4>Users in Room ({currentRoomUsers.length})</h4>
+            <h4>Users in Room ({currentRoomUsers.length}) {isCurrentUserOwner ? '• Owner' : ''}</h4>
             {currentRoomUsers.map((roomUser) => (
               <div key={roomUser.userId} className="user-item">
                 <div className="online-indicator"></div>
                 <span>{roomUser.username}</span>
                 {roomUser.userId === user.id && (
                   <span className="you-badge"> (you)</span>
+                )}
+                {currentRoomMeta.mutedUserIds.includes(roomUser.userId) && (
+                  <span className="you-badge"> (muted)</span>
+                )}
+                {isCurrentUserOwner && roomUser.userId !== user.id && (
+                  <div className="mod-controls">
+                    <button
+                      className="mod-btn"
+                      onClick={() => handleModerateMute(roomUser.userId, !currentRoomMeta.mutedUserIds.includes(roomUser.userId))}
+                    >
+                      {currentRoomMeta.mutedUserIds.includes(roomUser.userId) ? 'Unmute' : 'Mute'}
+                    </button>
+                    <button className="mod-btn danger" onClick={() => handleModerateRemove(roomUser.userId)}>
+                      Remove
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
@@ -347,6 +492,9 @@ const ChatRoom = ({ user, token, onLogout }) => {
                 >
                   <div className="online-indicator"></div>
                   <span>{onlineUser.username}</span>
+                  {(unreadDMs[onlineUser.userId] || 0) > 0 && (
+                    <span className="room-unread-badge">{unreadDMs[onlineUser.userId]}</span>
+                  )}
                   {directMessages[onlineUser.userId] && directMessages[onlineUser.userId].length > 0 && (
                     <span className="dm-badge">💬</span>
                   )}
@@ -365,6 +513,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
             roomName={currentRoom}
             messages={currentRoomMessages}
             roomUsers={currentRoomUsers}
+            roomMeta={currentRoomMeta}
             isDM={false}
           />
         ) : activeDM ? (
