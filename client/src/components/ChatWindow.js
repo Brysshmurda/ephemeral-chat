@@ -4,18 +4,24 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   const [messageInput, setMessageInput] = useState('');
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [isInCall, setIsInCall] = useState(false);
+  const [callMode, setCallMode] = useState(null);
+  const [remoteStreams, setRemoteStreams] = useState({});
+  const [gifUrlInput, setGifUrlInput] = useState('');
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const peerConnectionsRef = useRef(new Map()); // Map of userId -> RTCPeerConnection
+  const peerConnectionsRef = useRef(new Map()); // Map of roomName:userId -> RTCPeerConnection
   const localStreamRef = useRef(null);
+  const localVideoRef = useRef(null);
 
   useEffect(() => {
     // Listen for typing indicators
     socket.on('user_typing', (data) => {
+      if (isDM || data.roomName !== roomName) return;
       setTypingUsers(prev => new Set(prev).add(data.username));
     });
 
     socket.on('user_stopped_typing', (data) => {
+      if (isDM || data.roomName !== roomName) return;
       setTypingUsers(prev => {
         const newSet = new Set(prev);
         newSet.delete(data.username);
@@ -42,7 +48,14 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       socket.off('webrtc_ice_candidate');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket]);
+  }, [socket, roomName, isDM, isInCall]);
+
+  useEffect(() => {
+    return () => {
+      leaveCall(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomName]);
 
   useEffect(() => {
     scrollToBottom();
@@ -54,58 +67,132 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
   const handleSendMessage = (e) => {
     e.preventDefault();
-    if (messageInput.trim()) {
+    const trimmedMessage = messageInput.trim();
+    if (trimmedMessage) {
       if (isDM) {
         socket.emit('send_direct_message', {
           targetUserId: targetUserId,
-          message: messageInput
+          message: trimmedMessage,
+          messageType: 'text'
         });
       } else {
         socket.emit('send_message', {
-          message: messageInput
+          roomName,
+          message: trimmedMessage,
+          messageType: 'text'
         });
-        socket.emit('typing_stop');
+        socket.emit('typing_stop', { roomName });
       }
       setMessageInput('');
     }
+  };
+
+  const sendMediaMessage = ({ message, messageType }) => {
+    if (!message) return;
+
+    if (isDM) {
+      socket.emit('send_direct_message', {
+        targetUserId,
+        message,
+        messageType
+      });
+      return;
+    }
+
+    socket.emit('send_message', {
+      roomName,
+      message,
+      messageType
+    });
+  };
+
+  const handleSendGif = () => {
+    const trimmedGifUrl = gifUrlInput.trim();
+    if (!trimmedGifUrl) return;
+
+    sendMediaMessage({
+      message: trimmedGifUrl,
+      messageType: 'gif'
+    });
+    setGifUrlInput('');
+  };
+
+  const handleImageUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file.');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Image must be 2MB or less.');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      sendMediaMessage({
+        message: reader.result,
+        messageType: 'image'
+      });
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const insertEmoji = (emoji) => {
+    setMessageInput((prev) => `${prev}${emoji}`);
   };
 
   const handleTyping = (e) => {
     setMessageInput(e.target.value);
 
     if (!isDM) {
-      socket.emit('typing_start');
+      socket.emit('typing_start', { roomName });
 
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit('typing_stop');
+        socket.emit('typing_stop', { roomName });
       }, 1000);
     }
   };
 
   // Group call functions
-  const joinCall = async () => {
+  const joinCall = async (withVideo = false) => {
     try {
-      // Get microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: withVideo
+      });
       localStreamRef.current = stream;
 
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+
       setIsInCall(true);
+      setCallMode(withVideo ? 'video' : 'audio');
 
       // Notify server that we're joining the call
-      socket.emit('join_call');
+      socket.emit('join_call', { roomName });
     } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('Could not access microphone. Please check permissions.');
+      console.error('Error accessing media devices:', error);
+      alert('Could not access microphone/camera. Please check permissions.');
     }
   };
 
-  const leaveCall = () => {
-    // Close all peer connections
-    peerConnectionsRef.current.forEach((pc) => {
-      pc.close();
+  const leaveCall = (notifyServer = true) => {
+    // Close peer connections for current room
+    Array.from(peerConnectionsRef.current.entries()).forEach(([key, pc]) => {
+      if (key.startsWith(`${roomName}:`)) {
+        pc.close();
+        peerConnectionsRef.current.delete(key);
+      }
     });
-    peerConnectionsRef.current.clear();
 
     // Stop local stream
     if (localStreamRef.current) {
@@ -113,14 +200,25 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       localStreamRef.current = null;
     }
 
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+
+    setRemoteStreams({});
+
     setIsInCall(false);
+    setCallMode(null);
 
     // Notify server
-    socket.emit('leave_call');
+    if (notifyServer && !isDM) {
+      socket.emit('leave_call', { roomName });
+    }
   };
 
   // Called when we first join a call - get list of existing participants
-  const handleCallParticipants = async ({ participants }) => {
+  const handleCallParticipants = async ({ participants, roomName: eventRoomName }) => {
+    if (eventRoomName !== roomName) return;
+
     // Create peer connections with all existing participants
     for (const participant of participants) {
       await createPeerConnection(participant.userId, true);
@@ -128,23 +226,40 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   };
 
   // Called when another user joins the call
-  const handleUserJoinedCall = async ({ userId }) => {
+  const handleUserJoinedCall = async ({ userId, roomName: eventRoomName }) => {
+    if (eventRoomName !== roomName) return;
+
     if (userId !== currentUser.id && isInCall) {
       await createPeerConnection(userId, true);
     }
   };
 
   // Called when a user leaves the call
-  const handleUserLeftCall = ({ userId }) => {
-    const pc = peerConnectionsRef.current.get(userId);
+  const handleUserLeftCall = ({ userId, roomName: eventRoomName }) => {
+    if (eventRoomName !== roomName) return;
+
+    const connectionKey = `${roomName}:${userId}`;
+    const pc = peerConnectionsRef.current.get(connectionKey);
     if (pc) {
       pc.close();
-      peerConnectionsRef.current.delete(userId);
+      peerConnectionsRef.current.delete(connectionKey);
     }
+
+    setRemoteStreams((prev) => {
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
   };
 
   // Create a peer connection with another user
   const createPeerConnection = async (userId, shouldCreateOffer) => {
+    const connectionKey = `${roomName}:${userId}`;
+    const existingConnection = peerConnectionsRef.current.get(connectionKey);
+    if (existingConnection) {
+      return existingConnection;
+    }
+
     const peerConnection = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -164,6 +279,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
       if (event.candidate) {
         socket.emit('webrtc_ice_candidate', {
           targetUserId: userId,
+          roomName,
           candidate: event.candidate
         });
       }
@@ -171,12 +287,24 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
     // Handle incoming tracks
     peerConnection.ontrack = (event) => {
-      const audio = new Audio();
-      audio.srcObject = event.streams[0];
-      audio.play();
+      setRemoteStreams((prev) => ({
+        ...prev,
+        [userId]: event.streams[0]
+      }));
     };
 
-    peerConnectionsRef.current.set(userId, peerConnection);
+    peerConnection.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(peerConnection.connectionState)) {
+        peerConnectionsRef.current.delete(connectionKey);
+        setRemoteStreams((prev) => {
+          const next = { ...prev };
+          delete next[userId];
+          return next;
+        });
+      }
+    };
+
+    peerConnectionsRef.current.set(connectionKey, peerConnection);
 
     // Create and send offer if we're the initiator
     if (shouldCreateOffer) {
@@ -185,6 +313,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
       socket.emit('webrtc_offer', {
         targetUserId: userId,
+        roomName,
         offer: offer
       });
     }
@@ -193,7 +322,8 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
   };
 
   // Handle incoming WebRTC offer
-  const handleWebRTCOffer = async ({ from, offer }) => {
+  const handleWebRTCOffer = async ({ from, offer, roomName: eventRoomName }) => {
+    if (eventRoomName !== roomName) return;
     if (!isInCall) return;
 
     const peerConnection = await createPeerConnection(from, false);
@@ -204,21 +334,26 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
 
     socket.emit('webrtc_answer', {
       targetUserId: from,
+      roomName,
       answer: answer
     });
   };
 
   // Handle incoming WebRTC answer
-  const handleWebRTCAnswer = async ({ from, answer }) => {
-    const peerConnection = peerConnectionsRef.current.get(from);
+  const handleWebRTCAnswer = async ({ from, answer, roomName: eventRoomName }) => {
+    if (eventRoomName !== roomName) return;
+
+    const peerConnection = peerConnectionsRef.current.get(`${roomName}:${from}`);
     if (peerConnection) {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     }
   };
 
   // Handle incoming ICE candidate
-  const handleWebRTCIceCandidate = async ({ from, candidate }) => {
-    const peerConnection = peerConnectionsRef.current.get(from);
+  const handleWebRTCIceCandidate = async ({ from, candidate, roomName: eventRoomName }) => {
+    if (eventRoomName !== roomName) return;
+
+    const peerConnection = peerConnectionsRef.current.get(`${roomName}:${from}`);
     if (peerConnection) {
       try {
         await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
@@ -233,14 +368,28 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const callParticipantsCount = peerConnectionsRef.current.size + (isInCall ? 1 : 0);
+  const callParticipantsCount = Object.keys(remoteStreams).length + (isInCall ? 1 : 0);
+
+  const renderMessageBody = (msg) => {
+    if (msg.messageType === 'image' || msg.messageType === 'gif') {
+      return (
+        <img
+          src={msg.message}
+          alt="shared media"
+          className="message-image"
+        />
+      );
+    }
+
+    return <div className="message-text">{msg.message}</div>;
+  };
 
   return (
     <>
       <div className="ephemeral-notice">
         {isDM 
-          ? '⚠️ Direct messages are ephemeral - they disappear when you close the chat'
-          : '⚠️ This room is ephemeral - messages will disappear when everyone leaves'
+          ? '⚠️ Direct messages stay while this tab is open and disappear when it closes'
+          : '⚠️ Room messages stay while this tab is open and disappear when it closes'
         }
       </div>
 
@@ -271,14 +420,59 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
           )}
         </div>
         {!isDM && (
-          <button
-            className={`voice-call-btn ${isInCall ? 'calling' : ''}`}
-            onClick={isInCall ? leaveCall : joinCall}
-          >
-            {isInCall ? '📞 Leave Call' : '📞 Join Voice Call'}
-          </button>
+          <div className="call-controls">
+            {isInCall ? (
+              <button
+                className="voice-call-btn calling"
+                onClick={() => leaveCall(true)}
+              >
+                📞 Leave {callMode === 'video' ? 'Video' : 'Voice'} Call
+              </button>
+            ) : (
+              <>
+                <button
+                  className="voice-call-btn"
+                  onClick={() => joinCall(false)}
+                >
+                  📞 Join Voice
+                </button>
+                <button
+                  className="voice-call-btn video"
+                  onClick={() => joinCall(true)}
+                >
+                  📹 Join Video
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
+
+      {!isDM && isInCall && (
+        <div className="video-grid">
+          {callMode === 'video' && (
+            <div className="video-tile">
+              <video ref={localVideoRef} autoPlay muted playsInline className="remote-video" />
+              <span className="video-label">You</span>
+            </div>
+          )}
+          {Object.entries(remoteStreams).map(([userId, stream]) => (
+            <div key={userId} className="video-tile">
+              <video
+                autoPlay
+                playsInline
+                className="remote-video"
+                ref={(element) => {
+                  if (element) {
+                    element.srcObject = stream;
+                  }
+                }}
+              />
+              <span className="video-label">User {userId}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="messages-container">
         {roomMessages.length === 0 && (
@@ -303,7 +497,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
           >
             <div className="message-content">
               <div className="message-sender">{msg.senderUsername}</div>
-              <div className="message-text">{msg.message}</div>
+              {renderMessageBody(msg)}
               <div className="message-time">{formatTime(msg.timestamp)}</div>
             </div>
           </div>
@@ -316,6 +510,35 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
         <div ref={messagesEndRef} />
       </div>
 
+      <div className="media-toolbar">
+        <div className="emoji-buttons">
+          {['😀', '😂', '❤️', '👍', '🔥', '🎉'].map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              className="emoji-btn"
+              onClick={() => insertEmoji(emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+        <div className="gif-input-row">
+          <input
+            type="url"
+            className="gif-input"
+            placeholder="Paste GIF URL"
+            value={gifUrlInput}
+            onChange={(e) => setGifUrlInput(e.target.value)}
+          />
+          <button type="button" className="send-btn media" onClick={handleSendGif}>Send GIF</button>
+          <label className="image-upload-btn">
+            📷 Image
+            <input type="file" accept="image/*" onChange={handleImageUpload} />
+          </label>
+        </div>
+      </div>
+
       <form className="message-input-container" onSubmit={handleSendMessage}>
         <input
           type="text"
@@ -324,9 +547,7 @@ const ChatWindow = ({ socket, currentUser, roomName, messages: roomMessages, roo
           value={messageInput}
           onChange={handleTyping}
         />
-        <button type="submit" className="send-btn">
-          Send
-        </button>
+        <button type="submit" className="send-btn">Send</button>
       </form>
     </>
   );

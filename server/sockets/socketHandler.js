@@ -1,10 +1,10 @@
 const jwt = require('jsonwebtoken');
 
 // In-memory storage for active users
-// Structure: { userId: { socketId, username, currentRoom: roomName } }
+// Structure: { userId: { socketId, username, joinedRooms: Set[roomName] } }
 const activeUsers = new Map();
 
-// Structure: { roomName: { users: Set[userId], messages: [], activeCall: Set[userId] } }
+// Structure: { roomName: { users: Set[userId], activeCall: Set[userId] } }
 const rooms = new Map();
 
 module.exports = (io) => {
@@ -32,7 +32,7 @@ module.exports = (io) => {
     activeUsers.set(socket.userId, {
       socketId: socket.id,
       username: socket.username,
-      currentRoom: null
+      joinedRooms: new Set()
     });
 
     // Broadcast online users to all clients
@@ -52,16 +52,10 @@ module.exports = (io) => {
       const user = activeUsers.get(socket.userId);
       if (!user) return;
 
-      // Leave current room if in one
-      if (user.currentRoom) {
-        leaveRoom(socket, user.currentRoom);
-      }
-
       // Create room if doesn't exist
       if (!rooms.has(roomName)) {
         rooms.set(roomName, {
           users: new Set(),
-          messages: [],
           activeCall: new Set()
         });
         console.log(`🏠 Room created: ${roomName}`);
@@ -69,15 +63,15 @@ module.exports = (io) => {
 
       const room = rooms.get(roomName);
       room.users.add(socket.userId);
-      user.currentRoom = roomName;
+      user.joinedRooms.add(roomName);
 
       // Join the socket room
       socket.join(roomName);
 
-      // Send existing messages for this room
+      // Send room data (messages are client-ephemeral per tab session)
       socket.emit('room_joined', {
         roomName,
-        messages: room.messages,
+        messages: [],
         users: getRoomUsers(roomName)
       });
 
@@ -85,6 +79,7 @@ module.exports = (io) => {
       socket.to(roomName).emit('user_joined_room', {
         userId: socket.userId,
         username: socket.username,
+        roomName,
         users: getRoomUsers(roomName)
       });
 
@@ -92,19 +87,19 @@ module.exports = (io) => {
     });
 
     // Leave room
-    socket.on('leave_room', () => {
+    socket.on('leave_room', ({ roomName }) => {
       const user = activeUsers.get(socket.userId);
-      if (user && user.currentRoom) {
-        leaveRoom(socket, user.currentRoom);
+      if (user && roomName && user.joinedRooms.has(roomName)) {
+        leaveRoom(socket, roomName);
       }
     });
 
     // Send message to room
-    socket.on('send_message', ({ message }) => {
+    socket.on('send_message', ({ roomName, message, messageType = 'text' }) => {
       const user = activeUsers.get(socket.userId);
-      if (!user || !user.currentRoom) return;
+      if (!user || !roomName || !user.joinedRooms.has(roomName)) return;
 
-      const room = rooms.get(user.currentRoom);
+      const room = rooms.get(roomName);
       if (!room) return;
 
       const messageData = {
@@ -112,23 +107,21 @@ module.exports = (io) => {
         senderId: socket.userId,
         senderUsername: socket.username,
         message,
+        messageType,
         timestamp: new Date().toISOString()
       };
 
-      // Store message in room
-      room.messages.push(messageData);
-
       // Send message to all users in the room
-      io.to(user.currentRoom).emit('new_message', {
-        roomName: user.currentRoom,
+      io.to(roomName).emit('new_message', {
+        roomName,
         message: messageData
       });
 
-      console.log(`💬 Message in ${user.currentRoom}: ${socket.username}: ${message}`);
+      console.log(`💬 Message in ${roomName}: ${socket.username}: ${messageType}`);
     });
 
     // Send direct message to specific user
-    socket.on('send_direct_message', ({ targetUserId, message }) => {
+    socket.on('send_direct_message', ({ targetUserId, message, messageType = 'text' }) => {
       const targetUser = activeUsers.get(targetUserId);
       const sender = activeUsers.get(socket.userId);
       
@@ -140,6 +133,7 @@ module.exports = (io) => {
         senderUsername: sender.username,
         targetUserId: targetUserId,
         message,
+        messageType,
         timestamp: new Date().toISOString()
       };
 
@@ -153,31 +147,34 @@ module.exports = (io) => {
     });
 
     // Typing indicator for room
-    socket.on('typing_start', () => {
+    socket.on('typing_start', ({ roomName }) => {
       const user = activeUsers.get(socket.userId);
-      if (user && user.currentRoom) {
-        socket.to(user.currentRoom).emit('user_typing', {
+      if (user && roomName && user.joinedRooms.has(roomName)) {
+        socket.to(roomName).emit('user_typing', {
           userId: socket.userId,
-          username: socket.username
+          username: socket.username,
+          roomName
         });
       }
     });
 
-    socket.on('typing_stop', () => {
+    socket.on('typing_stop', ({ roomName }) => {
       const user = activeUsers.get(socket.userId);
-      if (user && user.currentRoom) {
-        socket.to(user.currentRoom).emit('user_stopped_typing', {
-          userId: socket.userId
+      if (user && roomName && user.joinedRooms.has(roomName)) {
+        socket.to(roomName).emit('user_stopped_typing', {
+          userId: socket.userId,
+          username: socket.username,
+          roomName
         });
       }
     });
 
     // Group call - Join call
-    socket.on('join_call', () => {
+    socket.on('join_call', ({ roomName }) => {
       const user = activeUsers.get(socket.userId);
-      if (!user || !user.currentRoom) return;
+      if (!user || !roomName || !user.joinedRooms.has(roomName)) return;
 
-      const room = rooms.get(user.currentRoom);
+      const room = rooms.get(roomName);
       if (!room) return;
 
       // Get current call participants before adding this user
@@ -191,65 +188,77 @@ module.exports = (io) => {
 
       // Notify the joining user of all current participants
       socket.emit('call_participants', {
+        roomName,
         participants: currentParticipants
       });
 
       // Notify all other participants that a new user joined
-      socket.to(user.currentRoom).emit('user_joined_call', {
+      socket.to(roomName).emit('user_joined_call', {
         userId: socket.userId,
-        username: socket.username
+        username: socket.username,
+        roomName
       });
 
-      console.log(`📞 ${socket.username} joined call in ${user.currentRoom}`);
+      console.log(`📞 ${socket.username} joined call in ${roomName}`);
     });
 
     // Group call - Leave call
-    socket.on('leave_call', () => {
+    socket.on('leave_call', ({ roomName }) => {
       const user = activeUsers.get(socket.userId);
-      if (!user || !user.currentRoom) return;
+      if (!user || !roomName || !user.joinedRooms.has(roomName)) return;
 
-      const room = rooms.get(user.currentRoom);
+      const room = rooms.get(roomName);
       if (!room) return;
 
       room.activeCall.delete(socket.userId);
 
       // Notify all participants that user left
-      socket.to(user.currentRoom).emit('user_left_call', {
-        userId: socket.userId
+      socket.to(roomName).emit('user_left_call', {
+        userId: socket.userId,
+        roomName
       });
 
-      console.log(`📞 ${socket.username} left call in ${user.currentRoom}`);
+      console.log(`📞 ${socket.username} left call in ${roomName}`);
     });
 
     // WebRTC signaling for group calls
-    socket.on('webrtc_offer', ({ targetUserId, offer }) => {
+    socket.on('webrtc_offer', ({ targetUserId, offer, roomName }) => {
       const targetUser = activeUsers.get(targetUserId);
       const user = activeUsers.get(socket.userId);
       
       // Only allow calls if both users are in the same room
-      if (targetUser && user && targetUser.currentRoom === user.currentRoom) {
+      if (
+        targetUser &&
+        user &&
+        roomName &&
+        user.joinedRooms.has(roomName) &&
+        targetUser.joinedRooms.has(roomName)
+      ) {
         io.to(targetUser.socketId).emit('webrtc_offer', {
           from: socket.userId,
+          roomName,
           offer
         });
       }
     });
 
-    socket.on('webrtc_answer', ({ targetUserId, answer }) => {
+    socket.on('webrtc_answer', ({ targetUserId, answer, roomName }) => {
       const targetUser = activeUsers.get(targetUserId);
       if (targetUser) {
         io.to(targetUser.socketId).emit('webrtc_answer', {
           from: socket.userId,
+          roomName,
           answer
         });
       }
     });
 
-    socket.on('webrtc_ice_candidate', ({ targetUserId, candidate }) => {
+    socket.on('webrtc_ice_candidate', ({ targetUserId, candidate, roomName }) => {
       const targetUser = activeUsers.get(targetUserId);
       if (targetUser) {
         io.to(targetUser.socketId).emit('webrtc_ice_candidate', {
           from: socket.userId,
+          roomName,
           candidate
         });
       }
@@ -260,8 +269,9 @@ module.exports = (io) => {
       console.log(`❌ User disconnected: ${socket.username}`);
 
       const user = activeUsers.get(socket.userId);
-      if (user && user.currentRoom) {
-        leaveRoom(socket, user.currentRoom);
+      if (user) {
+        const joinedRooms = Array.from(user.joinedRooms);
+        joinedRooms.forEach((roomName) => leaveRoom(socket, roomName));
       }
 
       // Remove user from active users
@@ -283,18 +293,20 @@ module.exports = (io) => {
     if (room.activeCall.has(socket.userId)) {
       room.activeCall.delete(socket.userId);
       socket.to(roomName).emit('user_left_call', {
-        userId: socket.userId
+        userId: socket.userId,
+        roomName
       });
     }
 
     room.users.delete(socket.userId);
-    user.currentRoom = null;
+    user.joinedRooms.delete(roomName);
     socket.leave(roomName);
 
     // Notify others in the room
     socket.to(roomName).emit('user_left_room', {
       userId: socket.userId,
       username: socket.username,
+      roomName,
       users: getRoomUsers(roomName)
     });
 

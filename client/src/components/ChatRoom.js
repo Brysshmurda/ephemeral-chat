@@ -1,19 +1,39 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import ChatWindow from './ChatWindow';
+
+const ROOM_MESSAGES_STORAGE_KEY = 'ghost_chat_room_messages';
+const DM_MESSAGES_STORAGE_KEY = 'ghost_chat_dm_messages';
+
+const loadSessionObject = (key) => {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    return {};
+  }
+};
 
 const ChatRoom = ({ user, token, onLogout }) => {
   const [socket, setSocket] = useState(null);
   const [currentRoom, setCurrentRoom] = useState(null);
-  const [roomUsers, setRoomUsers] = useState([]);
-  const [messages, setMessages] = useState([]);
+  const [joinedRooms, setJoinedRooms] = useState([]);
+  const [roomUsersByRoom, setRoomUsersByRoom] = useState({});
+  const [roomMessagesByRoom, setRoomMessagesByRoom] = useState(() => loadSessionObject(ROOM_MESSAGES_STORAGE_KEY));
   const [showRoomInput, setShowRoomInput] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [roomError, setRoomError] = useState('');
   const [onlineUsers, setOnlineUsers] = useState([]);
-  const [directMessages, setDirectMessages] = useState(new Map()); // userId -> messages[]
+  const [directMessages, setDirectMessages] = useState(() => loadSessionObject(DM_MESSAGES_STORAGE_KEY)); // userId -> messages[]
   const [activeDM, setActiveDM] = useState(null); // userId of active DM conversation
-  const socketRef = useRef(null);
+
+  useEffect(() => {
+    sessionStorage.setItem(ROOM_MESSAGES_STORAGE_KEY, JSON.stringify(roomMessagesByRoom));
+  }, [roomMessagesByRoom]);
+
+  useEffect(() => {
+    sessionStorage.setItem(DM_MESSAGES_STORAGE_KEY, JSON.stringify(directMessages));
+  }, [directMessages]);
 
   useEffect(() => {
     // Connect to Socket.IO server
@@ -32,9 +52,15 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
     // Room joined successfully
     newSocket.on('room_joined', ({ roomName, messages, users }) => {
+      setJoinedRooms((prev) => (prev.includes(roomName) ? prev : [...prev, roomName]));
       setCurrentRoom(roomName);
-      setMessages(messages);
-      setRoomUsers(users);
+      setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
+      setRoomMessagesByRoom((prev) => {
+        if (prev[roomName]) {
+          return prev;
+        }
+        return { ...prev, [roomName]: messages || [] };
+      });
       setShowRoomInput(false);
       setNewRoomName('');
       setRoomError('');
@@ -42,19 +68,25 @@ const ChatRoom = ({ user, token, onLogout }) => {
     });
 
     // New message received
-    newSocket.on('new_message', ({ message }) => {
-      setMessages(prev => [...prev, message]);
+    newSocket.on('new_message', ({ roomName, message }) => {
+      setRoomMessagesByRoom((prev) => {
+        const roomMessages = prev[roomName] || [];
+        return {
+          ...prev,
+          [roomName]: [...roomMessages, message]
+        };
+      });
     });
 
     // User joined the room
-    newSocket.on('user_joined_room', ({ username, users }) => {
-      setRoomUsers(users);
+    newSocket.on('user_joined_room', ({ username, users, roomName }) => {
+      setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
       console.log(`${username} joined the room`);
     });
 
     // User left the room
-    newSocket.on('user_left_room', ({ username, users }) => {
-      setRoomUsers(users);
+    newSocket.on('user_left_room', ({ username, users, roomName }) => {
+      setRoomUsersByRoom((prev) => ({ ...prev, [roomName]: users }));
       console.log(`${username} left the room`);
     });
 
@@ -65,27 +97,28 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
     // Direct message received
     newSocket.on('direct_message_received', (messageData) => {
-      setDirectMessages(prev => {
-        const newMap = new Map(prev);
+      setDirectMessages((prev) => {
         const userId = messageData.senderId;
-        const existingMessages = newMap.get(userId) || [];
-        newMap.set(userId, [...existingMessages, messageData]);
-        return newMap;
+        const existingMessages = prev[userId] || [];
+        return {
+          ...prev,
+          [userId]: [...existingMessages, messageData]
+        };
       });
     });
 
     // Direct message sent (confirmation)
     newSocket.on('direct_message_sent', (messageData) => {
-      setDirectMessages(prev => {
-        const newMap = new Map(prev);
+      setDirectMessages((prev) => {
         const userId = messageData.targetUserId;
-        const existingMessages = newMap.get(userId) || [];
-        newMap.set(userId, [...existingMessages, messageData]);
-        return newMap;
+        const existingMessages = prev[userId] || [];
+        return {
+          ...prev,
+          [userId]: [...existingMessages, messageData]
+        };
       });
     });
 
-    socketRef.current = newSocket;
     setSocket(newSocket);
 
     return () => {
@@ -128,35 +161,48 @@ const ChatRoom = ({ user, token, onLogout }) => {
   };
 
   const handleSwitchRoom = () => {
-    if (socket && currentRoom) {
-      socket.emit('leave_room');
-      setCurrentRoom(null);
-      setMessages([]);
-      setRoomUsers([]);
+    if (joinedRooms.length > 1 && currentRoom) {
+      const currentIndex = joinedRooms.indexOf(currentRoom);
+      const nextRoom = joinedRooms[(currentIndex + 1) % joinedRooms.length];
+      setCurrentRoom(nextRoom);
+    }
+  };
+
+  const handleLeaveRoom = (roomName) => {
+    if (!socket) return;
+
+    socket.emit('leave_room', { roomName });
+
+    setJoinedRooms((prev) => prev.filter((room) => room !== roomName));
+    setRoomUsersByRoom((prev) => {
+      const next = { ...prev };
+      delete next[roomName];
+      return next;
+    });
+
+    if (currentRoom === roomName) {
+      const remainingRooms = joinedRooms.filter((room) => room !== roomName);
+      setCurrentRoom(remainingRooms[0] || null);
     }
   };
 
   const handleStartDM = (targetUser) => {
-    // Leave current room if in one
-    if (currentRoom) {
-      socket.emit('leave_room');
-      setCurrentRoom(null);
-      setMessages([]);
-      setRoomUsers([]);
-    }
-    
     // Set active DM conversation
     setActiveDM(targetUser.userId);
     
     // Initialize DM conversation if it doesn't exist
-    if (!directMessages.has(targetUser.userId)) {
-      setDirectMessages(prev => {
-        const newMap = new Map(prev);
-        newMap.set(targetUser.userId, []);
-        return newMap;
+    if (!directMessages[targetUser.userId]) {
+      setDirectMessages((prev) => {
+        return {
+          ...prev,
+          [targetUser.userId]: []
+        };
       });
     }
   };
+
+  const currentRoomUsers = currentRoom ? (roomUsersByRoom[currentRoom] || []) : [];
+  const currentRoomMessages = currentRoom ? (roomMessagesByRoom[currentRoom] || []) : [];
 
   return (
     <div className="chat-container">
@@ -173,75 +219,94 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
         {/* Room Selector */}
         <div className="room-selector">
-          <h4>🏠 Room</h4>
-          {currentRoom ? (
-            <>
-              <div className="current-room-display">
-                <span className="room-name-badge">{currentRoom}</span>
-                <button 
-                  className="switch-room-btn" 
-                  onClick={handleSwitchRoom}
-                  title="Switch to another room"
-                >
-                  🔄
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="room-input-container">
-              {!showRoomInput ? (
-                <button 
-                  className="join-room-trigger-btn" 
-                  onClick={() => setShowRoomInput(true)}
-                >
-                  + Join/Create Room
-                </button>
-              ) : (
-                <form onSubmit={handleRoomSubmit} className="room-input-form">
-                  <input
-                    type="text"
-                    value={newRoomName}
-                    onChange={(e) => {
-                      setNewRoomName(e.target.value);
+          <h4>🏠 Rooms ({joinedRooms.length})</h4>
+          <div className="room-input-container">
+            {!showRoomInput ? (
+              <button
+                className="join-room-trigger-btn"
+                onClick={() => setShowRoomInput(true)}
+              >
+                + Join/Create Room
+              </button>
+            ) : (
+              <form onSubmit={handleRoomSubmit} className="room-input-form">
+                <input
+                  type="text"
+                  value={newRoomName}
+                  onChange={(e) => {
+                    setNewRoomName(e.target.value);
+                    setRoomError('');
+                  }}
+                  placeholder="Enter room name..."
+                  className="room-name-input"
+                  autoFocus
+                />
+                {roomError && (
+                  <div className="room-error">{roomError}</div>
+                )}
+                <div className="room-input-buttons">
+                  <button type="submit" className="room-submit-btn">
+                    Join
+                  </button>
+                  <button
+                    type="button"
+                    className="room-cancel-btn"
+                    onClick={() => {
+                      setShowRoomInput(false);
+                      setNewRoomName('');
                       setRoomError('');
                     }}
-                    placeholder="Enter room name..."
-                    className="room-name-input"
-                    autoFocus
-                  />
-                  {roomError && (
-                    <div className="room-error">{roomError}</div>
-                  )}
-                  <div className="room-input-buttons">
-                    <button type="submit" className="room-submit-btn">
-                      Join
-                    </button>
-                    <button 
-                      type="button" 
-                      className="room-cancel-btn"
-                      onClick={() => {
-                        setShowRoomInput(false);
-                        setNewRoomName('');
-                        setRoomError('');
-                      }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {joinedRooms.length > 0 && (
+              <div className="joined-rooms-list">
+                {joinedRooms.map((room) => (
+                  <div key={room} className={`joined-room-item ${currentRoom === room ? 'active' : ''}`}>
+                    <button
+                      className="joined-room-name"
+                      onClick={() => setCurrentRoom(room)}
+                      title={`Open ${room}`}
                     >
-                      Cancel
+                      {room}
+                    </button>
+                    <button
+                      className="joined-room-leave"
+                      onClick={() => handleLeaveRoom(room)}
+                      title={`Leave ${room}`}
+                    >
+                      ✖
                     </button>
                   </div>
-                </form>
-              )}
-              <p className="room-hint">
-                💡 Enter a room name to create or join. Share the name with friends!
-              </p>
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+
+            {joinedRooms.length > 1 && (
+              <button
+                className="switch-room-btn"
+                onClick={handleSwitchRoom}
+                title="Switch to next joined room"
+              >
+                🔄 Switch Room
+              </button>
+            )}
+
+            <p className="room-hint">
+              💡 You can stay in multiple rooms at once and switch anytime.
+            </p>
+          </div>
         </div>
 
         {/* Room Users */}
         {currentRoom && (
           <div className="room-users">
-            <h4>Users in Room ({roomUsers.length})</h4>
-            {roomUsers.map((roomUser) => (
+            <h4>Users in Room ({currentRoomUsers.length})</h4>
+            {currentRoomUsers.map((roomUser) => (
               <div key={roomUser.userId} className="user-item">
                 <div className="online-indicator"></div>
                 <span>{roomUser.username}</span>
@@ -269,7 +334,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
                 >
                   <div className="online-indicator"></div>
                   <span>{onlineUser.username}</span>
-                  {directMessages.has(onlineUser.userId) && directMessages.get(onlineUser.userId).length > 0 && (
+                  {directMessages[onlineUser.userId] && directMessages[onlineUser.userId].length > 0 && (
                     <span className="dm-badge">💬</span>
                   )}
                 </div>
@@ -285,8 +350,8 @@ const ChatRoom = ({ user, token, onLogout }) => {
             socket={socket}
             currentUser={user}
             roomName={currentRoom}
-            messages={messages}
-            roomUsers={roomUsers}
+            messages={currentRoomMessages}
+            roomUsers={currentRoomUsers}
             isDM={false}
           />
         ) : activeDM ? (
@@ -295,7 +360,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
             currentUser={user}
             targetUserId={activeDM}
             targetUsername={onlineUsers.find(u => u.userId === activeDM)?.username}
-            messages={directMessages.get(activeDM) || []}
+            messages={directMessages[activeDM] || []}
             roomUsers={[]}
             isDM={true}
             onCloseDM={() => setActiveDM(null)}
@@ -310,9 +375,9 @@ const ChatRoom = ({ user, token, onLogout }) => {
                 <ul>
                   <li>🏠 Create unlimited ephemeral rooms</li>
                   <li>💬 Real-time messaging</li>
-                  <li>📞 Group voice calls in rooms</li>
+                  <li>📞 Group voice/video calls in rooms</li>
                   <li>✉️ Direct message online users</li>
-                  <li>🔥 Everything disappears when you leave</li>
+                  <li>🔥 Messages disappear when you close the tab</li>
                   <li>🚫 No data stored anywhere</li>
                 </ul>
               </div>
