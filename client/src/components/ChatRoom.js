@@ -74,7 +74,11 @@ const ChatRoom = ({ user, token, onLogout }) => {
     }
 
     const newSocket = io(serverUrl, {
-      auth: { token }
+      auth: { token },
+      transports: ['websocket'],
+      upgrade: false,
+      timeout: 20000,
+      reconnectionAttempts: 10
     });
 
     newSocket.on('connect', () => {
@@ -91,6 +95,12 @@ const ChatRoom = ({ user, token, onLogout }) => {
 
     newSocket.on('connect_error', (error) => {
       const errorMessage = String(error?.message || '').toLowerCase();
+      const detailedReason = [
+        error?.message,
+        error?.description,
+        error?.context?.status,
+        error?.type
+      ].filter(Boolean).join(' | ');
       const isConfigIssue =
         errorMessage.includes('cors') ||
         errorMessage.includes('socket cors blocked') ||
@@ -114,7 +124,7 @@ const ChatRoom = ({ user, token, onLogout }) => {
         setConnectionStatus('reconnecting');
       }
 
-      setConnectionErrorDetail(error?.message || 'Unknown connection error');
+      setConnectionErrorDetail(detailedReason || 'Unknown connection error');
       if (isDev) {
         console.error('Connection error:', error);
       }
